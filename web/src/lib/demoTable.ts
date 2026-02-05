@@ -8,33 +8,30 @@ type DemoTableResult = {
   rows: DataRow[];
 };
 
-/**
- * Временная функция для получения демонстрационной таблицы
- * из Excel-файла в папке data-files.
- *
- * Для MVP:
- * - Берём первый лист файла `клиенты-ai.xlsx`;
- * - Первая строка — заголовки колонок;
- * - Пытаемся определить типы колонок по первым значениям;
- * - Ограничиваемся первыми 200 строками для UI.
- */
-export async function getDemoTable(): Promise<DemoTableResult> {
+const TABLE_FILES: Record<string, string> = {
+  clients: "клиенты-ai.xlsx",
+  contacts: "Контакты-ai.xlsx",
+  tenders: "NewBiz - Все тендеры.xlsx",
+};
+
+export async function getDemoTable(tableName: string = "clients"): Promise<DemoTableResult> {
+  const fileName = TABLE_FILES[tableName] || TABLE_FILES.clients;
   const excelPath = path.join(
     process.cwd(),
     "..",
     "data-files",
-    "клиенты-ai.xlsx",
+    fileName,
   );
 
   if (!fs.existsSync(excelPath)) {
-    // Fallback: пустая структура, фронт может показать сообщение
+    console.warn("Файл не найден:", excelPath);
     return { columns: [], rows: [] };
   }
 
   let workbook: XLSX.WorkBook;
   try {
     const buffer = fs.readFileSync(excelPath);
-    workbook = XLSX.read(buffer, { type: "buffer" });
+    workbook = XLSX.read(buffer, { type: "buffer", cellDates: true });
   } catch (error) {
     console.error("Не удалось прочитать Excel-файл:", excelPath, error);
     return { columns: [], rows: [] };
@@ -67,7 +64,6 @@ export async function getDemoTable(): Promise<DemoTableResult> {
         break;
       }
 
-      // Базовая попытка понять дату
       if (value instanceof Date) {
         detectedType = "date";
         break;
@@ -79,8 +75,6 @@ export async function getDemoTable(): Promise<DemoTableResult> {
         detectedType = "number";
         break;
       }
-
-      // Можно добавить распознавание дат по шаблону, но для MVP достаточно
     }
 
     return {
@@ -90,7 +84,7 @@ export async function getDemoTable(): Promise<DemoTableResult> {
     };
   });
 
-  const rows: DataRow[] = json.slice(0, 200).map((row) => {
+  const rows: DataRow[] = json.slice(0, 1000).map((row) => {
     const result: DataRow = {};
     keys.forEach((key) => {
       const value = row[key];

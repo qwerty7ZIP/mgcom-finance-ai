@@ -1,6 +1,7 @@
- "use client";
+"use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import type { TableRequest } from "./ChatPanel";
 
 type ColumnType = "string" | "number" | "date";
 
@@ -20,11 +21,13 @@ type SortState = {
 type Props = {
   columns: DataColumn[];
   rows: DataRow[];
+  activeRequest?: TableRequest | null;
 };
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50];
 
-export function DataTable({ columns, rows }: Props) {
+export function DataTable({ columns, rows, activeRequest }: Props) {
+  const [mounted, setMounted] = useState(false);
   const [visibleColumns, setVisibleColumns] = useState<string[]>(
     () => columns.map((c) => c.key),
   );
@@ -32,6 +35,76 @@ export function DataTable({ columns, rows }: Props) {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(PAGE_SIZE_OPTIONS[0]);
   const [filters, setFilters] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // Синхронизация с запросом от ИИ
+  useEffect(() => {
+    if (!activeRequest) return;
+
+    console.log("Applying AI request to table:", activeRequest);
+
+    const findColumn = (fieldName: string) => {
+      const lowName = (fieldName || "").toLowerCase();
+      // 1. Точное совпадение
+      let found = columns.find(c =>
+        c.key.toLowerCase() === lowName ||
+        c.label.toLowerCase() === lowName
+      );
+      if (found) return found;
+
+      // 2. Частичное совпадение (например, ИИ прислал "выручка", а колонка "Выручка (руб)")
+      found = columns.find(c =>
+        c.key.toLowerCase().includes(lowName) ||
+        c.label.toLowerCase().includes(lowName)
+      );
+      return found;
+    };
+
+    // 1. Колонки
+    if (activeRequest.columns && activeRequest.columns.length > 0) {
+      const requestedKeys = activeRequest.columns
+        .map(reqCol => findColumn(reqCol)?.key)
+        .filter(Boolean) as string[];
+
+      if (requestedKeys.length > 0) {
+        setVisibleColumns(requestedKeys);
+      }
+    } else {
+      setVisibleColumns(columns.map(c => c.key));
+    }
+
+    // 2. Сортировка
+    if (activeRequest.sort && activeRequest.sort.field) {
+      const foundSort = findColumn(activeRequest.sort.field);
+      if (foundSort) {
+        setSort({
+          key: foundSort.key,
+          direction: activeRequest.sort.direction || "asc"
+        });
+      }
+    }
+
+    // 3. Фильтры
+    if (activeRequest.filters && activeRequest.filters.length > 0) {
+      const newFilters: Record<string, string> = {};
+      activeRequest.filters.forEach(f => {
+        const foundCol = findColumn(f.field);
+        if (foundCol) {
+          newFilters[foundCol.key] = String(f.value);
+        }
+      });
+      setFilters(newFilters);
+    } else {
+      setFilters({});
+    }
+
+    setPage(1);
+  }, [activeRequest, columns]);
+
+
 
   const toggleColumnVisibility = (key: string) => {
     setVisibleColumns((prev) =>
@@ -62,19 +135,39 @@ export function DataTable({ columns, rows }: Props) {
         const filterValue = filters[col.key];
         if (!filterValue) return true;
 
+        // Если есть активный запрос от ИИ для этой колонки, используем его оператор
+        const aiFilter = activeRequest?.filters?.find(f => {
+          const lowF = (f.field || "").toLowerCase();
+          return col.key.toLowerCase() === lowF ||
+            col.label.toLowerCase() === lowF ||
+            col.key.toLowerCase().includes(lowF) ||
+            col.label.toLowerCase().includes(lowF);
+        });
+
+        const operator = aiFilter?.operator || (col.type === "number" ? "gte" : "contains");
         const raw = row[col.key];
         if (raw == null) return false;
 
         if (col.type === "string") {
-          return String(raw).toLowerCase().includes(filterValue.toLowerCase());
+          const sRaw = String(raw).toLowerCase();
+          const sVal = filterValue.toLowerCase();
+          if (operator === "eq") return sRaw === sVal;
+          return sRaw.includes(sVal);
         }
 
         if (col.type === "number") {
           const num = typeof raw === "number" ? raw : Number(raw);
           const target = Number(filterValue);
           if (Number.isNaN(num) || Number.isNaN(target)) return true;
-          // Простое правило: num >= target
-          return num >= target;
+
+          switch (operator) {
+            case "eq": return num === target;
+            case "gte": return num >= target;
+            case "lte": return num <= target;
+            case "gt": return num > target;
+            case "lt": return num < target;
+            default: return num >= target;
+          }
         }
 
         if (col.type === "date") {
@@ -82,7 +175,9 @@ export function DataTable({ columns, rows }: Props) {
           const filterDate = new Date(filterValue);
           if (Number.isNaN(date.getTime()) || Number.isNaN(filterDate.getTime()))
             return true;
-          // Простое правило: date >= filterDate
+
+          if (operator === "eq") return date.getTime() === filterDate.getTime();
+          if (operator === "lte") return date <= filterDate;
           return date >= filterDate;
         }
 
@@ -123,7 +218,16 @@ export function DataTable({ columns, rows }: Props) {
     return current;
   }, [rows, columns, filters, sort]);
 
+  if (!mounted) {
+    return (
+      <div className="flex h-full items-center justify-center text-xs text-slate-400">
+        Загрузка таблицы...
+      </div>
+    );
+  }
+
   const totalPages = Math.max(1, Math.ceil(filteredAndSorted.length / pageSize));
+
   const currentPage = Math.min(page, totalPages);
   const startIndex = (currentPage - 1) * pageSize;
   const pageRows = filteredAndSorted.slice(startIndex, startIndex + pageSize);
