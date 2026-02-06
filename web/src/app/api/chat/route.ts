@@ -92,6 +92,12 @@ export async function POST(req: Request) {
       ? `gpt://${folderId}/yandexgpt/latest`
       : undefined);
 
+      console.log("YANDEX_ENV_DEBUG", {
+        hasKey: !!apiKey,
+        hasFolder: !!folderId,
+        modelUri,
+      });
+      
   if (!apiKey || !folderId || !modelUri) {
     // Локальная заглушка
     return NextResponse.json({
