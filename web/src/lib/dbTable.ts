@@ -5,14 +5,20 @@ import { supabaseServer } from "@/lib/supabaseServer";
 const ALLOWED_TABLES = ["clients", "contacts", "tenders"] as const;
 type AllowedTable = (typeof ALLOWED_TABLES)[number];
 
+export type TableResultWithError = TableResult & { error?: string };
+
 export async function getDbTable(
   tableName: string = "clients",
-): Promise<TableResult> {
+): Promise<TableResultWithError> {
   if (!supabaseServer) {
     console.warn(
       "[Supabase] Клиент не инициализирован. Вернём пустую таблицу.",
     );
-    return { columns: [], rows: [] };
+    return {
+      columns: [],
+      rows: [],
+      error: "Supabase не настроен. Проверьте переменные окружения (.env.local).",
+    };
   }
 
   const safeTable: AllowedTable = ALLOWED_TABLES.includes(
@@ -28,7 +34,11 @@ export async function getDbTable(
 
   if (error) {
     console.error("[Supabase] Ошибка при запросе таблицы", safeTable, error);
-    return { columns: [], rows: [] };
+    return {
+      columns: [],
+      rows: [],
+      error: error.message || "Ошибка подключения к базе данных.",
+    };
   }
 
   if (!data || data.length === 0) {

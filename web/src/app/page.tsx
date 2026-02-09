@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Dashboard } from "@/components/Dashboard";
 import { getDbTable } from "@/lib/dbTable";
@@ -22,7 +23,23 @@ export default async function Home() {
             </span>
           </div>
         </div>
-        <ThemeToggle />
+        <div className="flex items-center gap-3">
+          <Link
+            href="/account"
+            className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white/80 px-3 py-1 text-xs font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-100 dark:hover:bg-slate-800"
+          >
+            <span
+              className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-900 text-amber-300 dark:bg-slate-100 dark:text-slate-900"
+              aria-hidden
+            >
+              <svg className="size-3" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
+              </svg>
+            </span>
+            <span>Личный кабинет</span>
+          </Link>
+          <ThemeToggle />
+        </div>
       </header>
 
       {/* Основной контент: Дашборд с таблицей и чатом */}

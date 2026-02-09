@@ -455,7 +455,7 @@ export function DataTable({ columns, rows, activeRequest }: Props) {
           <label className="flex items-center gap-1 text-xs text-slate-600 dark:text-slate-300">
             На странице:
             <select
-              className="rounded-md border border-slate-200 bg-white px-1.5 py-0.5 text-xs dark:border-slate-700 dark:bg-slate-900"
+              className="rounded-md border border-slate-200 bg-white px-1.5 py-0.5 text-xs focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:focus:border-slate-500 dark:focus:ring-slate-500"
               value={pageSize}
               onChange={(e) => {
                 const next = Number(e.target.value);

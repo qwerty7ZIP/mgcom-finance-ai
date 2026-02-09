@@ -12,6 +12,44 @@ const HIDDEN_SYSTEM_KEYS = new Set([
   "inserted_at",
 ]);
 
+// Человекочитаемые подписи для известных колонок (ключи в нижнем регистре)
+const LABEL_OVERRIDES: Record<string, string> = {
+  // Таблица clients
+  mgc_client: "Клиент",
+  ul: "ЮЛ",
+  client_category: "Направление",
+  description: "Описание",
+  top_30: "Топ‑30",
+  id_pf: "ID в Planfix",
+  inn: "ИНН",
+  pf_client: "Название в Planfix",
+
+  // Таблица contacts
+  gender: "Пол",
+  site: "Сайт",
+  name: "Имя",
+  phone: "Телефон",
+  "e-mail": "E‑mail",
+  work_position: "Должность",
+  company: "Компания",
+  telegram: "Telegram",
+  date_birth: "Дата рождения",
+  adress: "Адрес",
+
+  // Таблица tenders
+  agency: "Агентство",
+  client: "Клиент",
+  project: "Проект",
+  tender_ist: "Источник",
+  tender_budget: "Бюджет",
+  tender_start: "Дата приглашения",
+  tender_dl: "ДЛ",
+  tender_end: "Дата окончания",
+  tender_status: "Статус",
+  tender_kp_start: "Начало подготовки КП",
+  tender_kp_end: "Окончание подготовки КП",
+};
+
 /**
  * Универсальный конструктор табличных данных из массива объектов.
  * Используется и для Excel-файлов, и для данных из БД.
@@ -28,8 +66,8 @@ export function buildTableFromRecords(
   const keys = Object.keys(sampleRow);
 
   const columns: DataColumn[] = keys.map((key) => {
-    const label = String(key);
     const lowKey = key.toLowerCase();
+    const label = LABEL_OVERRIDES[lowKey] ?? String(key);
     const hidden = HIDDEN_SYSTEM_KEYS.has(lowKey);
 
     // Определяем тип по первым ненулевым значениям

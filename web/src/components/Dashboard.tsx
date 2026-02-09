@@ -15,23 +15,29 @@ export function Dashboard({ initialColumns, initialRows }: Props) {
     const [columns, setColumns] = useState<DataColumn[]>(initialColumns);
     const [rows, setRows] = useState<DataRow[]>(initialRows);
     const [loading, setLoading] = useState(false);
+    const [tableError, setTableError] = useState<string | null>(null);
 
     // Обработка смены таблицы
     const handleApplyRequest = async (req: TableRequest) => {
         setActiveRequest(req);
+        setTableError(null);
 
         if (req.table && req.table !== currentTable) {
             setLoading(true);
             try {
                 const res = await fetch(`/api/data?table=${req.table}`);
+                const data = await res.json();
                 if (res.ok) {
-                    const data = await res.json();
-                    setColumns(data.columns);
-                    setRows(data.rows);
+                    setColumns(data.columns ?? []);
+                    setRows(data.rows ?? []);
                     setCurrentTable(req.table);
+                    setTableError((data.columns?.length ?? 0) > 0 ? null : (data.error ?? null));
+                } else {
+                    setTableError(data.error || "Не удалось загрузить данные.");
                 }
             } catch (err) {
                 console.error("Failed to fetch new table data:", err);
+                setTableError("Ошибка сети. Проверьте подключение.");
             } finally {
                 setLoading(false);
             }
@@ -56,8 +62,12 @@ export function Dashboard({ initialColumns, initialRows }: Props) {
                 {/* Компонент таблицы с фильтрами/сортировкой/пагинацией */}
                 <div className="flex-1">
                     {loading ? (
-                        <div className="flex h-full items-center justify-center text-xs text-slate-500">
-                            Загрузка данных {currentTable}...
+                        <div className="flex h-full flex-col items-center justify-center gap-3 text-slate-500 dark:text-slate-400">
+                            <div
+                                className="size-10 animate-spin rounded-full border-2 border-slate-200 border-t-slate-600 dark:border-slate-700 dark:border-t-amber-400"
+                                aria-hidden
+                            />
+                            <span className="text-xs">Загрузка данных {currentTable}…</span>
                         </div>
                     ) : columns.length > 0 ? (
                         <DataTable
@@ -66,8 +76,12 @@ export function Dashboard({ initialColumns, initialRows }: Props) {
                             activeRequest={activeRequest}
                         />
                     ) : (
-                        <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 text-xs text-slate-500 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-400">
-                            Не удалось загрузить данные из {currentTable}. Проверьте актуальность файлов.
+                        <div className="flex h-full flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-xs text-slate-500 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-400">
+                            <p>Не удалось загрузить данные из {currentTable}.</p>
+                            <p>Проверьте подключение к базе данных (Supabase) и наличие данных в таблице.</p>
+                            {tableError && (
+                                <p className="mt-2 max-w-md text-red-600 dark:text-red-400">{tableError}</p>
+                            )}
                         </div>
                     )}
                 </div>
