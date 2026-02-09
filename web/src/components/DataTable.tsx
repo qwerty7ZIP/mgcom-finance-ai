@@ -9,9 +9,33 @@ export type DataColumn = {
   key: string;
   label: string;
   type: ColumnType;
+  /**
+   * Системные/технические колонки (id, created_at и т.п.),
+   * которые не должны отображаться пользователю по умолчанию.
+   */
+  hidden?: boolean;
 };
 
 export type DataRow = Record<string, string | number | Date | null>;
+
+const AGENCY_FILTER_KEY = "agency";
+const AGENCY_OPTIONS = [
+  "MGCom",
+  "E-Promo",
+  "Resonance",
+  "Артикс",
+  "AGM",
+  "Era",
+  "Биплан",
+  "MGrowth",
+  "Mediasystem",
+  "Mediaminded",
+  "Mediamaker",
+  "m360",
+  "Blacklight",
+  "Group4Media",
+  "DataStories",
+];
 
 type SortState = {
   key: string | null;
@@ -24,17 +48,23 @@ type Props = {
   activeRequest?: TableRequest | null;
 };
 
-const PAGE_SIZE_OPTIONS = [10, 25, 50];
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 0];
 
 export function DataTable({ columns, rows, activeRequest }: Props) {
   const [mounted, setMounted] = useState(false);
   const [visibleColumns, setVisibleColumns] = useState<string[]>(
-    () => columns.map((c) => c.key),
+    () => columns.filter((c) => !c.hidden).map((c) => c.key),
   );
   const [sort, setSort] = useState<SortState>({ key: null, direction: "asc" });
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(PAGE_SIZE_OPTIONS[0]);
   const [filters, setFilters] = useState<Record<string, string>>({});
+  const [dateRanges, setDateRanges] = useState<
+    Record<string, { from?: string; to?: string }>
+  >({});
+  const [multiFilters, setMultiFilters] = useState<Record<string, string[]>>(
+    {},
+  );
 
   useEffect(() => {
     setMounted(true);
@@ -73,7 +103,7 @@ export function DataTable({ columns, rows, activeRequest }: Props) {
         setVisibleColumns(requestedKeys);
       }
     } else {
-      setVisibleColumns(columns.map(c => c.key));
+      setVisibleColumns(columns.filter(c => !c.hidden).map(c => c.key));
     }
 
     // 2. Сортировка
@@ -90,15 +120,51 @@ export function DataTable({ columns, rows, activeRequest }: Props) {
     // 3. Фильтры
     if (activeRequest.filters && activeRequest.filters.length > 0) {
       const newFilters: Record<string, string> = {};
-      activeRequest.filters.forEach(f => {
+      const newDateRanges: Record<string, { from?: string; to?: string }> = {};
+      const newMulti: Record<string, string[]> = {};
+
+      activeRequest.filters.forEach((f) => {
         const foundCol = findColumn(f.field);
-        if (foundCol) {
-          newFilters[foundCol.key] = String(f.value);
+        if (!foundCol) return;
+
+        const value = String(f.value ?? "");
+        const op = (f.operator || "").toLowerCase();
+
+        // Мульти-фильтры по агентствам
+        if (foundCol.key === AGENCY_FILTER_KEY && value) {
+          newMulti[AGENCY_FILTER_KEY] = [value];
+          return;
+        }
+
+        if (foundCol.type === "date") {
+          const key = foundCol.key;
+          const current = newDateRanges[key] || {};
+
+          if (op === "gte" || op === "gt") {
+            current.from = value;
+          } else if (op === "lte" || op === "lt") {
+            current.to = value;
+          } else if (op === "eq") {
+            current.from = value;
+            current.to = value;
+          } else if (!op && value) {
+            // На всякий случай: если оператор не задан, но есть значение, считаем его нижней границей
+            current.from = value;
+          }
+
+          newDateRanges[key] = current;
+        } else {
+          newFilters[foundCol.key] = value;
         }
       });
+
       setFilters(newFilters);
+      setDateRanges(newDateRanges);
+      setMultiFilters(newMulti);
     } else {
       setFilters({});
+      setDateRanges({});
+      setMultiFilters({});
     }
 
     setPage(1);
@@ -126,6 +192,48 @@ export function DataTable({ columns, rows, activeRequest }: Props) {
     setPage(1);
   };
 
+  const handleDateRangeChange = (
+    key: string,
+    which: "from" | "to",
+    value: string,
+  ) => {
+    setDateRanges((prev) => ({
+      ...prev,
+      [key]: {
+        ...prev[key],
+        [which]: value || undefined,
+      },
+    }));
+    setPage(1);
+  };
+
+  const handleMultiSelectChange = (
+    key: string,
+    selectedValues: string[],
+  ) => {
+    setMultiFilters((prev) => ({
+      ...prev,
+      [key]: selectedValues,
+    }));
+    setPage(1);
+  };
+
+  const toggleMultiSelectValue = (key: string, value: string) => {
+    setMultiFilters((prev) => {
+      const current = new Set(prev[key] ?? []);
+      if (current.has(value)) {
+        current.delete(value);
+      } else {
+        current.add(value);
+      }
+      return {
+        ...prev,
+        [key]: Array.from(current),
+      };
+    });
+    setPage(1);
+  };
+
   const filteredAndSorted = useMemo(() => {
     let current = rows;
 
@@ -133,6 +241,76 @@ export function DataTable({ columns, rows, activeRequest }: Props) {
     current = current.filter((row) =>
       columns.every((col) => {
         const filterValue = filters[col.key];
+
+        // Мультивыбор по колонке agency
+        if (col.key === AGENCY_FILTER_KEY) {
+          const selected = multiFilters[AGENCY_FILTER_KEY] || [];
+          if (!selected.length) return true;
+          const raw = row[col.key];
+          if (raw == null) return false;
+          const s = String(raw);
+          return selected.includes(s);
+        }
+
+        // Для дат сначала проверяем диапазон
+        if (col.type === "date") {
+          const range = dateRanges[col.key];
+
+          // Если диапазон и одиночный фильтр НЕ заданы — принимаем все значения (включая null)
+          if (!range?.from && !range?.to && !filterValue) {
+            return true;
+          }
+
+          const raw = row[col.key];
+          if (raw == null) return false;
+
+          const date = raw instanceof Date ? raw : new Date(String(raw));
+          if (Number.isNaN(date.getTime())) return true;
+
+          if (range && (range.from || range.to)) {
+            if (range.from) {
+              const from = new Date(range.from);
+              if (!Number.isNaN(from.getTime()) && date < from) return false;
+            }
+            if (range.to) {
+              const to = new Date(range.to);
+              if (!Number.isNaN(to.getTime()) && date > to) return false;
+            }
+            return true;
+          }
+
+          // Если диапазон не задан, но есть одиночное значение как раньше — используем старую логику
+          if (!filterValue) return true;
+
+          const aiFilter = activeRequest?.filters?.find((f) => {
+            const lowF = (f.field || "").toLowerCase();
+            return (
+              col.key.toLowerCase() === lowF ||
+              col.label.toLowerCase() === lowF ||
+              col.key.toLowerCase().includes(lowF) ||
+              col.label.toLowerCase().includes(lowF)
+            );
+          });
+
+          const operator =
+            aiFilter?.operator ||
+            "gte"; /* по умолчанию для дат интерпретируем как "с даты..." */
+
+          const filterDate = new Date(filterValue);
+          if (
+            Number.isNaN(date.getTime()) ||
+            Number.isNaN(filterDate.getTime())
+          )
+            return true;
+
+          if (operator === "eq") return date.getTime() === filterDate.getTime();
+          if (operator === "lte") return date <= filterDate;
+          if (operator === "lt") return date < filterDate;
+          if (operator === "gt") return date > filterDate;
+          // gte и остальные — как "с даты и позже"
+          return date >= filterDate;
+        }
+
         if (!filterValue) return true;
 
         // Если есть активный запрос от ИИ для этой колонки, используем его оператор
@@ -168,17 +346,6 @@ export function DataTable({ columns, rows, activeRequest }: Props) {
             case "lt": return num < target;
             default: return num >= target;
           }
-        }
-
-        if (col.type === "date") {
-          const date = raw instanceof Date ? raw : new Date(String(raw));
-          const filterDate = new Date(filterValue);
-          if (Number.isNaN(date.getTime()) || Number.isNaN(filterDate.getTime()))
-            return true;
-
-          if (operator === "eq") return date.getTime() === filterDate.getTime();
-          if (operator === "lte") return date <= filterDate;
-          return date >= filterDate;
         }
 
         return true;
@@ -226,13 +393,19 @@ export function DataTable({ columns, rows, activeRequest }: Props) {
     );
   }
 
-  const totalPages = Math.max(1, Math.ceil(filteredAndSorted.length / pageSize));
+  const effectivePageSize = pageSize === 0 ? filteredAndSorted.length || 1 : pageSize;
+  const totalPages = Math.max(1, Math.ceil(filteredAndSorted.length / effectivePageSize));
 
-  const currentPage = Math.min(page, totalPages);
-  const startIndex = (currentPage - 1) * pageSize;
-  const pageRows = filteredAndSorted.slice(startIndex, startIndex + pageSize);
+  const currentPage = pageSize === 0 ? 1 : Math.min(page, totalPages);
+  const startIndex = pageSize === 0 ? 0 : (currentPage - 1) * effectivePageSize;
+  const pageRows =
+    pageSize === 0
+      ? filteredAndSorted
+      : filteredAndSorted.slice(startIndex, startIndex + effectivePageSize);
 
-  const visibleCols = columns.filter((c) => visibleColumns.includes(c.key));
+  const visibleCols = columns.filter(
+    (c) => !c.hidden && visibleColumns.includes(c.key),
+  );
 
   const handleExportCSV = () => {
     const exportRows = filteredAndSorted;
@@ -285,13 +458,14 @@ export function DataTable({ columns, rows, activeRequest }: Props) {
               className="rounded-md border border-slate-200 bg-white px-1.5 py-0.5 text-xs dark:border-slate-700 dark:bg-slate-900"
               value={pageSize}
               onChange={(e) => {
-                setPageSize(Number(e.target.value));
+                const next = Number(e.target.value);
+                setPageSize(next);
                 setPage(1);
               }}
             >
               {PAGE_SIZE_OPTIONS.map((size) => (
                 <option key={size} value={size}>
-                  {size}
+                  {size === 0 ? "Все" : size}
                 </option>
               ))}
             </select>
@@ -310,12 +484,12 @@ export function DataTable({ columns, rows, activeRequest }: Props) {
                 ▾
               </span>
             </summary>
-            <div className="absolute right-0 z-10 mt-1 w-56 rounded-xl border border-slate-200 bg-white p-2 text-xs shadow-lg dark:border-slate-700 dark:bg-slate-900">
+            <div className="absolute right-0 z-50 mt-1 w-56 rounded-xl border border-slate-200 bg-white p-2 text-xs shadow-lg dark:border-slate-700 dark:bg-slate-900">
               <p className="mb-1 px-2 text-[11px] text-slate-500 dark:text-slate-400">
                 Отметьте видимые колонки:
               </p>
               <div className="max-h-52 space-y-1 overflow-auto">
-                {columns.map((col) => (
+                {columns.filter(col => !col.hidden).map((col) => (
                   <label
                     key={col.key}
                     className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-xs text-slate-700 hover:bg-slate-50 dark:text-slate-100 dark:hover:bg-slate-800"
@@ -336,7 +510,7 @@ export function DataTable({ columns, rows, activeRequest }: Props) {
       </div>
 
       {/* Таблица */}
-      <div className="flex-1 overflow-auto rounded-xl border border-slate-200 bg-slate-50/70 text-xs dark:border-slate-700 dark:bg-slate-900/80">
+      <div className="flex-1 max-h-[70vh] overflow-auto rounded-xl border border-slate-200 bg-slate-50/70 text-xs dark:border-slate-700 dark:bg-slate-900/80">
         <table className="min-w-full border-separate border-spacing-0">
           <thead className="bg-slate-100 text-[11px] font-medium uppercase tracking-wide text-slate-600 dark:bg-slate-900 dark:text-slate-300">
             <tr>
@@ -362,21 +536,107 @@ export function DataTable({ columns, rows, activeRequest }: Props) {
                   </button>
                   {/* Фильтр по колонке */}
                   <div className="mt-1">
-                    <input
-                      type={col.type === "number" ? "number" : "text"}
-                      placeholder={
-                        col.type === "string"
-                          ? "Фильтр..."
-                          : col.type === "number"
-                            ? "Минимум..."
-                            : "С даты..."
-                      }
-                      className="w-full rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-700 outline-none placeholder:text-slate-400 focus:border-slate-400 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:focus:border-slate-400"
-                      value={filters[col.key] ?? ""}
-                      onChange={(e) =>
-                        handleFilterChange(col.key, e.target.value)
-                      }
-                    />
+                    {col.type === "date" ? (
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="date"
+                          className="w-full rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-700 outline-none placeholder:text-slate-400 focus:border-slate-400 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:focus:border-slate-400"
+                          value={dateRanges[col.key]?.from ?? ""}
+                          onChange={(e) =>
+                            handleDateRangeChange(
+                              col.key,
+                              "from",
+                              e.target.value,
+                            )
+                          }
+                        />
+                        <span className="text-[10px] text-slate-400">—</span>
+                        <input
+                          type="date"
+                          className="w-full rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-700 outline-none placeholder:text-slate-400 focus:border-slate-400 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:focus:border-slate-400"
+                          value={dateRanges[col.key]?.to ?? ""}
+                          onChange={(e) =>
+                            handleDateRangeChange(
+                              col.key,
+                              "to",
+                              e.target.value,
+                            )
+                          }
+                        />
+                      </div>
+                    ) : col.key === AGENCY_FILTER_KEY ? (
+                      <details className="group relative">
+                        <summary className="flex cursor-pointer items-center justify-between rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-700 shadow-sm transition-colors hover:bg-slate-50 marker:content-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:hover:bg-slate-800">
+                          <span className="truncate">
+                            {multiFilters[AGENCY_FILTER_KEY]?.length
+                              ? `Агентств: ${
+                                  multiFilters[AGENCY_FILTER_KEY].length
+                                }`
+                              : "Все агентства"}
+                          </span>
+                          <span className="ml-1 text-[9px] text-slate-400 group-open:rotate-180">
+                            ▾
+                          </span>
+                        </summary>
+                        <div className="absolute right-0 z-50 mt-1 w-56 rounded-xl border border-slate-200 bg-white p-2 text-[11px] shadow-lg dark:border-slate-700 dark:bg-slate-900">
+                          <div className="mb-1 flex items-center justify-between px-1">
+                            <span className="text-[11px] font-medium text-slate-600 dark:text-slate-300">
+                              Агентства
+                            </span>
+                            <button
+                              type="button"
+                              className="text-[10px] text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-200"
+                              onClick={() =>
+                                handleMultiSelectChange(AGENCY_FILTER_KEY, [])
+                              }
+                            >
+                              Сбросить
+                            </button>
+                          </div>
+                          <div className="max-h-52 space-y-1 overflow-auto">
+                            {AGENCY_OPTIONS.map((name) => {
+                              const selected =
+                                multiFilters[AGENCY_FILTER_KEY]?.includes(
+                                  name,
+                                ) ?? false;
+                              return (
+                                <label
+                                  key={name}
+                                  className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-xs text-slate-700 hover:bg-slate-50 dark:text-slate-100 dark:hover:bg-slate-800"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    className="h-3 w-3 rounded border-slate-300 text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                                    checked={selected}
+                                    onChange={() =>
+                                      toggleMultiSelectValue(
+                                        AGENCY_FILTER_KEY,
+                                        name,
+                                      )
+                                    }
+                                  />
+                                  <span className="truncate">{name}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </details>
+                    ) : (
+                      <input
+                        type={col.type === "number" ? "number" : "text"}
+                        placeholder={
+                          col.type === "string"
+                            ? "Фильтр..."
+                            : "Минимум..."
+                        }
+                        className="w-full rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-700 outline-none placeholder:text-slate-400 focus:border-slate-400 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:focus:border-slate-400"
+                        value={filters[col.key] ?? ""}
+                        onChange={(e) =>
+                          handleFilterChange(col.key, e.target.value)
+                        }
+                      />
+                    )}
                   </div>
                 </th>
               ))}
@@ -430,7 +690,7 @@ export function DataTable({ columns, rows, activeRequest }: Props) {
           <button
             type="button"
             onClick={() => setPage((p) => Math.max(1, p - 1))}
-            disabled={currentPage === 1}
+            disabled={currentPage === 1 || pageSize === 0}
             className="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-700 shadow-sm transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
           >
             Назад
@@ -440,7 +700,7 @@ export function DataTable({ columns, rows, activeRequest }: Props) {
             onClick={() =>
               setPage((p) => (p < totalPages ? p + 1 : p))
             }
-            disabled={currentPage === totalPages}
+            disabled={currentPage === totalPages || pageSize === 0}
             className="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-700 shadow-sm transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
           >
             Вперёд

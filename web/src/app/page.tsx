@@ -1,9 +1,9 @@
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Dashboard } from "@/components/Dashboard";
-import { getDemoTable } from "@/lib/demoTable";
+import { getDbTable } from "@/lib/dbTable";
 
 export default async function Home() {
-  const { columns, rows } = await getDemoTable();
+  const { columns, rows } = await getDbTable("clients");
 
   return (
     <div className="flex h-screen flex-col bg-background text-foreground overflow-hidden">

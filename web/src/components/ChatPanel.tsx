@@ -71,7 +71,10 @@ export function ChatPanel({ onApplyRequest }: Props) {
 
       // Извлекаем данные запроса (они могут быть в data.tableRequest или в корне data.data)
       const requestData = data.data?.tableRequest ?? data.data;
-      const aiReply = data.reply || "Запрос выполнен.";
+      const aiReply =
+        typeof data.data?.message === "string"
+          ? data.data.message
+          : data.reply || "Запрос выполнен.";
 
       setHistory(prev => [...prev, { role: "ai", text: aiReply, request: requestData }]);
 

@@ -49,7 +49,7 @@
 
 Функции:
 
-- Принимает `initialColumns` и `initialRows` (демо‑таблица с сервера).
+- Принимает `initialColumns` и `initialRows` (данные с сервера, полученные из Supabase).
 - Хранит состояние:
   - `currentTable` — активная таблица (`clients`, `contacts`, `tenders`);
   - `columns`, `rows` — текущие данные;

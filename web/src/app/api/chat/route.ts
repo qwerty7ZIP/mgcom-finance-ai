@@ -48,6 +48,67 @@ const systemPrompt = `
 Отвечай этим JSON. Ты можешь добавить немного текста вокруг JSON, если нужно.
 `;
 
+const enhancedSystemPrompt = `${systemPrompt}
+
+ДОПОЛНИТЕЛЬНОЕ ОПИСАНИЕ СХЕМЫ ДАННЫХ:
+1) Таблица clients (клиенты):
+- mgc_client — название клиента (компании). Синонимы: клиент, компания, название клиента, бренд.
+- Ul — юридическое лицо клиента.
+- Client_category — категория/направление клиента (отрасль, сегмент).
+- description — дополнительная информация о клиенте.
+- top_30 — признак, входит ли клиент в топ‑30.
+- id_pf — ID клиента в Planfix.
+- Inn — ИНН клиента.
+- pf_client — название клиента в Planfix.
+
+2) Таблица contacts (контакты):
+- name — имя и фамилия контакта (ФИО).
+- company — компания (клиент) контакта.
+- phone — телефон.
+- e-mail — почта.
+- work_position — должность.
+- а также дополнительные поля: gender, telegram, date_birth, adress.
+
+3) Таблица tenders (тендеры):
+- client — клиент (название компании).
+- tender_budget — бюджет тендера в рублях.
+- tender_start — дата начала тендера.
+- tender_end — дата окончания тендера.
+- tender_dl — дэдлайн.
+- tender_status — статус тендера (выигран, проигран, ждём ответа, подготовка КП и т.п.).
+- tender_KP_start / tender_KP_end — даты начала и окончания подготовки КП.
+
+ФИЛЬТРАЦИЯ ПО АГЕНТСТВУ:
+- Если пользователь явно спрашивает «тендеры какого-то агентства» или упоминает агентство (например:
+  «покажи тендеры агентства i-Media», «тендеры нашего агентства ...»),
+  используй поле "agency" для фильтрации.
+- В таком случае добавь фильтр вида:
+  {
+    "field": "agency",
+    "operator": "contains",
+    "value": "<название_агентства_из_запроса>"
+  }
+
+ОСОБО ВАЖНО ДЛЯ ТЕНДЕРОВ:
+- Если пользователь просит "тендеры за прошлый месяц/год/период" и НЕ уточняет, по какой дате фильтровать,
+  то по умолчанию используй поле "tender_start" (дата начала тендера) и оператор "gte" и/или "lte"
+  с датами в формате "YYYY-MM-DD".
+
+ПРИМЕР:
+- Запрос: "Покажи тендеры за прошлый месяц" ->
+  "table": "tenders",
+  "filters": [
+    {
+      "field": "tender_start",
+      "operator": "gte",
+      "value": "2024-01-01"
+    }
+  ]
+
+ОПЕРАТОРЫ:
+- В поле "operator" используй только eq, gte, lte, gt, lt, contains — без between и in.
+`;
+
 type ChatMessage = {
   role: "user" | "ai";
   text: string;
@@ -72,7 +133,7 @@ export async function POST(req: Request) {
 
   // Формируем список сообщений для YandexGPT
   const yaMessages = [
-    { role: "system", text: systemPrompt },
+    { role: "system", text: enhancedSystemPrompt },
     ...history.map((m) => ({
       role: m.role === "ai" ? "assistant" : "user",
       text: m.text,
@@ -205,9 +266,58 @@ export async function POST(req: Request) {
       );
     }
 
+    // Нормализация относительных периодов (например, "прошлый месяц")
+    try {
+      const text = latestMessage.toLowerCase();
+      const tr = parsed?.tableRequest;
+
+      const askedForTenders =
+        tr?.table === "tenders" ||
+        text.includes("тендер");
+
+      const askedForLastMonth = text.includes("прошлый месяц");
+
+      if (askedForTenders && askedForLastMonth) {
+        const now = new Date();
+        const year =
+          now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+        const monthIndex = (now.getMonth() - 1 + 12) % 12; // 0-11
+
+        const from = new Date(year, monthIndex, 1);
+        const to = new Date(year, monthIndex + 1, 0); // последний день предыдущего месяца
+
+        const fmt = (d: Date) =>
+          `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+            d.getDate(),
+          ).padStart(2, "0")}`;
+
+        const fromStr = fmt(from);
+        const toStr = fmt(to);
+
+        parsed.tableRequest = {
+          ...(tr || {}),
+          table: "tenders",
+          filters: [
+            {
+              field: "tender_start",
+              operator: "gte",
+              value: fromStr,
+            },
+            {
+              field: "tender_start",
+              operator: "lte",
+              value: toStr,
+            },
+          ],
+        };
+      }
+    } catch (e) {
+      console.error("Ошибка при нормализации относительных периодов:", e);
+    }
+
     return NextResponse.json({
       reply: content, // Полный текст ответа для чата
-      data: parsed    // Распарсенный JSON для таблицы
+      data: parsed, // Распарсенный (и нормализованный) JSON для таблицы
     });
   } catch (error) {
     console.error("Ошибка в API /api/chat (YandexGPT):", error);
