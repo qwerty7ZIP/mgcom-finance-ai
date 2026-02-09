@@ -382,8 +382,14 @@ export function DataTable({ columns, rows, activeRequest }: Props) {
       }
     }
 
+    // Ограничение числа записей по запросу ИИ (топ-N, один с максимальным и т.д.)
+    const limit = activeRequest?.limit;
+    if (typeof limit === "number" && limit > 0) {
+      current = current.slice(0, limit);
+    }
+
     return current;
-  }, [rows, columns, filters, sort]);
+  }, [rows, columns, filters, sort, activeRequest?.limit]);
 
   if (!mounted) {
     return (

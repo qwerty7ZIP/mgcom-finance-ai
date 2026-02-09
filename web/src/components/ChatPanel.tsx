@@ -184,7 +184,7 @@ export function ChatPanel({ onApplyRequest }: Props) {
           {[
             "Покажи тендеры за прошлый месяц",
             "Выручка больше 1 млн за 2024",
-            "Топ-5 клиентов по сумме",
+            "Топ-5 тендеров по бюджету",
           ].map((chip) => (
             <button
               key={chip}

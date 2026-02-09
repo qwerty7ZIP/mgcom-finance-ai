@@ -107,6 +107,12 @@ const enhancedSystemPrompt = `${systemPrompt}
 
 ОПЕРАТОРЫ:
 - В поле "operator" используй только eq, gte, lte, gt, lt, contains — без between и in.
+
+LIMIT (ограничение числа строк):
+- Если пользователь просит "топ-N" (топ-5, топ-10, первые 5, пять тендеров и т.п.) — обязательно задай в tableRequest поле "limit": N (число).
+- Если просит "один с самым большим/максимальным", "тендер с наибольшим бюджетом", "клиент с максимальной выручкой" и т.п. — задай "limit": 1 и укажи сортировку (sort) по нужному полю по убыванию (direction: "desc"), чтобы в первой строке оказалась запись с максимумом.
+- Пример: "Топ-5 тендеров по бюджету" -> table: "tenders", sort: { field: "tender_budget", direction: "desc" }, limit: 5.
+- Пример: "Тендер с самым большим бюджетом" -> table: "tenders", sort: { field: "tender_budget", direction: "desc" }, limit: 1.
 `;
 
 type ChatMessage = {
