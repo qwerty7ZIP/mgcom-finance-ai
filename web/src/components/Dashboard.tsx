@@ -22,15 +22,31 @@ export function Dashboard({ initialColumns, initialRows }: Props) {
         setActiveRequest(req);
         setTableError(null);
 
-        if (req.table && req.table !== currentTable) {
+        const requestedTable = req.table || currentTable;
+        const hasIlikeFilter = (req.filters || []).some((f) => String(f.operator || "").toLowerCase() === "ilike");
+
+        // Если поменяли таблицу — грузим новую как раньше.
+        // Если таблица та же, но есть ilike-фильтр — переносим фильтрацию на сервер и тоже грузим заново.
+        if ((req.table && req.table !== currentTable) || hasIlikeFilter) {
             setLoading(true);
             try {
-                const res = await fetch(`/api/data?table=${req.table}`);
+                const res = hasIlikeFilter
+                  ? await fetch(`/api/data`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        tableRequest: {
+                          ...req,
+                          table: requestedTable,
+                        },
+                      }),
+                    })
+                  : await fetch(`/api/data?table=${requestedTable}`);
                 const data = await res.json();
                 if (res.ok) {
                     setColumns(data.columns ?? []);
                     setRows(data.rows ?? []);
-                    setCurrentTable(req.table);
+                    setCurrentTable(requestedTable);
                     setTableError((data.columns?.length ?? 0) > 0 ? null : (data.error ?? null));
                 } else {
                     setTableError(data.error || "Не удалось загрузить данные.");

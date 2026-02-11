@@ -27,7 +27,7 @@ const systemPrompt = `
     "filters": [
       {
         "field": "имя колонки",
-        "operator": "eq|gte|lte|contains|between|in",
+        "operator": "eq|ilike|gte|lte|contains|between|in",
         "value": "значение"
       }
     ],
@@ -106,7 +106,7 @@ const enhancedSystemPrompt = `${systemPrompt}
   ]
 
 ОПЕРАТОРЫ:
-- В поле "operator" используй только eq, gte, lte, gt, lt, contains — без between и in.
+- В поле "operator" используй только eq, ilike, gte, lte, gt, lt, contains — без between и in.
 
 LIMIT (ограничение числа строк):
 - Если пользователь просит "топ-N" (топ-5, топ-10, первые 5, пять тендеров и т.п.) — обязательно задай в tableRequest поле "limit": N (число).
@@ -272,7 +272,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // Нормализация относительных периодов (например, "прошлый месяц")
+    // Нормализация относительных периодов (например, "прошлый месяц", "последние 3 месяца")
     try {
       const text = latestMessage.toLowerCase();
       const tr = parsed?.tableRequest;
@@ -281,9 +281,34 @@ export async function POST(req: Request) {
         tr?.table === "tenders" ||
         text.includes("тендер");
 
-      const askedForLastMonth = text.includes("прошлый месяц");
+      const fmt = (d: Date) =>
+        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+          d.getDate(),
+        ).padStart(2, "0")}`;
 
-      if (askedForTenders && askedForLastMonth) {
+      const mergeDateRangeIntoRequest = (fromStr: string, toStr: string) => {
+        const existing = Array.isArray(tr?.filters) ? tr.filters : [];
+        const keep = existing.filter((f: any) => {
+          const field = String(f?.field || "").toLowerCase();
+          return field && field !== "tender_start";
+        });
+
+        parsed.tableRequest = {
+          ...(tr || {}),
+          table: "tenders",
+          filters: [
+            ...keep,
+            { field: "tender_start", operator: "gte", value: fromStr },
+            { field: "tender_start", operator: "lte", value: toStr },
+          ],
+        };
+      };
+
+      // 1) "прошлый месяц" / "предыдущий месяц"
+      const askedForPrevMonth =
+        text.includes("прошлый месяц") || text.includes("предыдущий месяц");
+
+      if (askedForTenders && askedForPrevMonth) {
         const now = new Date();
         const year =
           now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
@@ -292,30 +317,22 @@ export async function POST(req: Request) {
         const from = new Date(year, monthIndex, 1);
         const to = new Date(year, monthIndex + 1, 0); // последний день предыдущего месяца
 
-        const fmt = (d: Date) =>
-          `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
-            d.getDate(),
-          ).padStart(2, "0")}`;
+        mergeDateRangeIntoRequest(fmt(from), fmt(to));
+      }
 
-        const fromStr = fmt(from);
-        const toStr = fmt(to);
+      // 2) "последние N месяцев" / "последних N месяцев" / "за последние N месяцев"
+      // Пример: "за последние 3 месяца"
+      const monthsMatch = text.match(
+        /последн(?:ие|их)\s+(\d+)\s+месяц(?:а|ев)?/i,
+      );
+      const monthsN = monthsMatch ? Number(monthsMatch[1]) : NaN;
 
-        parsed.tableRequest = {
-          ...(tr || {}),
-          table: "tenders",
-          filters: [
-            {
-              field: "tender_start",
-              operator: "gte",
-              value: fromStr,
-            },
-            {
-              field: "tender_start",
-              operator: "lte",
-              value: toStr,
-            },
-          ],
-        };
+      if (askedForTenders && Number.isFinite(monthsN) && monthsN > 0) {
+        const now = new Date();
+        const to = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const from = new Date(to);
+        from.setMonth(from.getMonth() - monthsN);
+        mergeDateRangeIntoRequest(fmt(from), fmt(to));
       }
     } catch (e) {
       console.error("Ошибка при нормализации относительных периодов:", e);

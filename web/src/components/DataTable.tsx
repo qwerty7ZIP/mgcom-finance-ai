@@ -329,8 +329,12 @@ export function DataTable({ columns, rows, activeRequest }: Props) {
         if (col.type === "string") {
           const sRaw = String(raw).toLowerCase();
           const sVal = filterValue.toLowerCase();
-          if (operator === "eq") return sRaw === sVal;
-          return sRaw.includes(sVal);
+          // ilike: SQL-подобный поиск без учета регистра, допускает шаблон с %
+          // contains: подстрока без шаблонов
+          const normalizedVal = sVal.replace(/%/g, "").trim();
+          if (!normalizedVal) return true;
+          if (operator === "eq") return sRaw === normalizedVal;
+          return sRaw.includes(normalizedVal);
         }
 
         if (col.type === "number") {
