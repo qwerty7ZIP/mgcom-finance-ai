@@ -37,6 +37,24 @@ const AGENCY_OPTIONS = [
   "DataStories",
 ];
 
+const STATUS_FILTER_KEY = "tender_status";
+const STATUS_EMPTY_LABEL = "(Без статуса)";
+/** Значения для фильтра статуса. Пустая строка = «Без статуса». */
+const STATUS_OPTIONS: string[] = [
+  "Подготовка КП",
+  "Не участвовали",
+  "Размещается",
+  "Обработка лида",
+  "Ждем ответа",
+  "Выигран тендер",
+  "Предтендер",
+  "Отмененная",
+  "Проигран тендер",
+  "Принятие решения",
+  "Пройдено ПКО",
+  "", // отображается как STATUS_EMPTY_LABEL
+];
+
 type SortState = {
   key: string | null;
   direction: "asc" | "desc";
@@ -133,6 +151,13 @@ export function DataTable({ columns, rows, activeRequest }: Props) {
         // Мульти-фильтры по агентствам
         if (foundCol.key === AGENCY_FILTER_KEY && value) {
           newMulti[AGENCY_FILTER_KEY] = [value];
+          return;
+        }
+
+        // Мульти-фильтры по статусу тендера (оператор in с массивом или eq с одним значением)
+        if (foundCol.key === STATUS_FILTER_KEY) {
+          const arr = Array.isArray(f.value) ? f.value : (value ? [value] : []);
+          if (arr.length) newMulti[STATUS_FILTER_KEY] = arr.map(String);
           return;
         }
 
@@ -250,6 +275,15 @@ export function DataTable({ columns, rows, activeRequest }: Props) {
           if (raw == null) return false;
           const s = String(raw);
           return selected.includes(s);
+        }
+
+        // Мультивыбор по статусу тендера (пустая строка в selected = «Без статуса»)
+        if (col.key === STATUS_FILTER_KEY) {
+          const selected = multiFilters[STATUS_FILTER_KEY] || [];
+          if (!selected.length) return true;
+          const raw = row[col.key];
+          const cellVal = raw == null ? "" : String(raw).trim();
+          return selected.some((s) => (s === "" ? cellVal === "" : cellVal === s));
         }
 
         // Для дат сначала проверяем диапазон
@@ -528,7 +562,11 @@ export function DataTable({ columns, rows, activeRequest }: Props) {
                 <th
                   key={col.key}
                   scope="col"
-                  className="sticky top-0 z-10 border-b border-slate-200 bg-slate-100 px-3 py-2 text-left text-[11px] font-semibold dark:border-slate-800 dark:bg-slate-900"
+                  className={`sticky top-0 border-b border-slate-200 bg-slate-100 px-3 py-2 text-left text-[11px] font-semibold dark:border-slate-800 dark:bg-slate-900 ${
+                    col.key === AGENCY_FILTER_KEY || col.key === STATUS_FILTER_KEY
+                      ? "z-20"
+                      : "z-10"
+                  }`}
                 >
                   <button
                     type="button"
@@ -577,7 +615,7 @@ export function DataTable({ columns, rows, activeRequest }: Props) {
                     ) : col.key === AGENCY_FILTER_KEY ? (
                       <details className="group relative">
                         <summary className="flex cursor-pointer items-center justify-between rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-700 shadow-sm transition-colors hover:bg-slate-50 marker:content-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:hover:bg-slate-800">
-                          <span className="truncate">
+                          <span className="truncate normal-case">
                             {multiFilters[AGENCY_FILTER_KEY]?.length
                               ? `Агентств: ${
                                   multiFilters[AGENCY_FILTER_KEY].length
@@ -588,9 +626,9 @@ export function DataTable({ columns, rows, activeRequest }: Props) {
                             ▾
                           </span>
                         </summary>
-                        <div className="absolute right-0 z-50 mt-1 w-56 rounded-xl border border-slate-200 bg-white p-2 text-[11px] shadow-lg dark:border-slate-700 dark:bg-slate-900">
+                        <div className="absolute left-0 z-50 mt-1 w-56 rounded-xl border border-slate-200 bg-white p-2 text-[11px] shadow-lg dark:border-slate-700 dark:bg-slate-900">
                           <div className="mb-1 flex items-center justify-between px-1">
-                            <span className="text-[11px] font-medium text-slate-600 dark:text-slate-300">
+                            <span className="text-[11px] font-medium normal-case text-slate-600 dark:text-slate-300">
                               Агентства
                             </span>
                             <button
@@ -625,7 +663,65 @@ export function DataTable({ columns, rows, activeRequest }: Props) {
                                       )
                                     }
                                   />
-                                  <span className="truncate">{name}</span>
+                                  <span className="truncate normal-case">{name}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </details>
+                    ) : col.key === STATUS_FILTER_KEY ? (
+                      <details className="group relative">
+                        <summary className="flex cursor-pointer items-center justify-between rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-700 shadow-sm transition-colors hover:bg-slate-50 marker:content-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:hover:bg-slate-800">
+                          <span className="truncate normal-case">
+                            {multiFilters[STATUS_FILTER_KEY]?.length
+                              ? `Статусов: ${multiFilters[STATUS_FILTER_KEY].length}`
+                              : "Все статусы"}
+                          </span>
+                          <span className="ml-1 text-[9px] text-slate-400 group-open:rotate-180">
+                            ▾
+                          </span>
+                        </summary>
+                        <div className="absolute left-0 z-50 mt-1 w-56 rounded-xl border border-slate-200 bg-white p-2 text-[11px] shadow-lg dark:border-slate-700 dark:bg-slate-900">
+                          <div className="mb-1 flex items-center justify-between px-1">
+                            <span className="text-[11px] font-medium normal-case text-slate-600 dark:text-slate-300">
+                              Статус
+                            </span>
+                            <button
+                              type="button"
+                              className="text-[10px] text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-200"
+                              onClick={() =>
+                                handleMultiSelectChange(STATUS_FILTER_KEY, [])
+                              }
+                            >
+                              Сбросить
+                            </button>
+                          </div>
+                          <div className="max-h-52 space-y-1 overflow-auto">
+                            {STATUS_OPTIONS.map((opt) => {
+                              const selected =
+                                multiFilters[STATUS_FILTER_KEY]?.includes(
+                                  opt,
+                                ) ?? false;
+                              const label =
+                                opt === "" ? STATUS_EMPTY_LABEL : opt;
+                              return (
+                                <label
+                                  key={opt === "" ? "__empty__" : opt}
+                                  className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-xs text-slate-700 hover:bg-slate-50 dark:text-slate-100 dark:hover:bg-slate-800"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    className="h-3 w-3 rounded border-slate-300 text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                                    checked={selected}
+                                    onChange={() =>
+                                      toggleMultiSelectValue(
+                                        STATUS_FILTER_KEY,
+                                        opt,
+                                      )
+                                    }
+                                  />
+                                  <span className="truncate normal-case">{label}</span>
                                 </label>
                               );
                             })}

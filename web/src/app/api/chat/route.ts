@@ -35,10 +35,10 @@ const systemPrompt = `
     "sort": {
       "field": "имя колонки",
       "direction": "asc|desc"
-    },
-    "limit": 200
+    }
   }
 }
+Поле "limit" в tableRequest указывай только когда пользователь явно просит ограничить число строк (топ-N и т.п.); иначе не включай limit — тогда отобразятся все подходящие записи.
 
 ВАЖНОЕ ПРАВИЛО ПО КОЛОНКАМ:
 - Поле "columns" используй ТОЛЬКО если пользователь прямо просит: "покажи только [названия колонок]".
@@ -89,28 +89,45 @@ const enhancedSystemPrompt = `${systemPrompt}
     "value": "<название_агентства_из_запроса>"
   }
 
+ФИЛЬТРАЦИЯ ПО СТАТУСУ ТЕНДЕРА (поле tender_status):
+- В базе статусы хранятся точно: "Выигран тендер", "Проигран тендер", "Размещается" и др.
+- Если пользователь просит ВЫИГРАННЫЕ тендеры (победа, won, выигран, выиграли, победили) — в базе это статусы "Выигран тендер" и "Размещается". Добавь один фильтр:
+  { "field": "tender_status", "operator": "in", "value": ["Выигран тендер", "Размещается"] }
+- Если пользователь просит ПРОИГРАННЫЕ тендеры (проигрыш, lost, проигран, не выиграли, не победили) — в базе это статус "Проигран тендер". Добавь фильтр:
+  { "field": "tender_status", "operator": "in", "value": ["Проигран тендер"] }
+  или можно { "field": "tender_status", "operator": "eq", "value": "Проигран тендер" }.
+- Если пользователь просит ОТМЕНЁННЫЕ тендеры (отмененные, отменены, отменённые) — в базе это статус "Отмененная". Добавь фильтр:
+  { "field": "tender_status", "operator": "in", "value": ["Отмененная"] }.
+- Запросы вроде "выигранные тендеры за 2024 год" требуют и фильтра по tender_status (in ["Выигран тендер", "Размещается"]), и фильтра по дате (tender_start gte/lte).
+
 ОСОБО ВАЖНО ДЛЯ ТЕНДЕРОВ:
+- Если пользователь просит тендеры «за [год]» (например: за 2025, за 2024, в 2025 году) — обязательно задай ДВА фильтра по полю tender_start: один с оператором "gte" и значением "YYYY-01-01", второй с оператором "lte" и значением "YYYY-12-31", чтобы охватить весь год от 1 января до 31 декабря.
 - Если пользователь просит "тендеры за прошлый месяц/год/период" и НЕ уточняет, по какой дате фильтровать,
   то по умолчанию используй поле "tender_start" (дата начала тендера) и оператор "gte" и/или "lte"
   с датами в формате "YYYY-MM-DD".
 
-ПРИМЕР:
+ПРИМЕРЫ:
+- Запрос: "Выигранные тендеры за 2025" ->
+  "table": "tenders",
+  "filters": [
+    { "field": "tender_status", "operator": "in", "value": ["Выигран тендер", "Размещается"] },
+    { "field": "tender_start", "operator": "gte", "value": "2025-01-01" },
+    { "field": "tender_start", "operator": "lte", "value": "2025-12-31" }
+  ]
 - Запрос: "Покажи тендеры за прошлый месяц" ->
   "table": "tenders",
   "filters": [
-    {
-      "field": "tender_start",
-      "operator": "gte",
-      "value": "2024-01-01"
-    }
+    { "field": "tender_start", "operator": "gte", "value": "2024-01-01" },
+    { "field": "tender_start", "operator": "lte", "value": "2024-01-31" }
   ]
 
 ОПЕРАТОРЫ:
-- В поле "operator" используй только eq, ilike, gte, lte, gt, lt, contains — без between и in.
+- В поле "operator" используй: eq, ilike, gte, lte, gt, lt, contains, а также in (для поля tender_status, когда value — массив строк, например ["Выигран тендер", "Размещается"]). Не используй between.
 
 LIMIT (ограничение числа строк):
-- Если пользователь просит "топ-N" (топ-5, топ-10, первые 5, пять тендеров и т.п.) — обязательно задай в tableRequest поле "limit": N (число).
-- Если просит "один с самым большим/максимальным", "тендер с наибольшим бюджетом", "клиент с максимальной выручкой" и т.п. — задай "limit": 1 и укажи сортировку (sort) по нужному полю по убыванию (direction: "desc"), чтобы в первой строке оказалась запись с максимумом.
+- Поле "limit" в tableRequest включай ТОЛЬКО если пользователь явно просит ограничить число записей (топ-N, первые N, не более N и т.п.). Во всех остальных случаях НЕ включай "limit" — тогда будут показаны все подходящие под фильтры записи (до 15000).
+- Если пользователь просит "топ-N" (топ-5, топ-10, первые 5, пять тендеров и т.п.) — задай в tableRequest поле "limit": N (число).
+- Если просит "один с самым большим/максимальным", "тендер с наибольшим бюджетом", "клиент с максимальной выручкой" и т.п. — задай "limit": 1 и укажи сортировку (sort) по нужному полю по убыванию (direction: "desc").
 - Пример: "Топ-5 тендеров по бюджету" -> table: "tenders", sort: { field: "tender_budget", direction: "desc" }, limit: 5.
 - Пример: "Тендер с самым большим бюджетом" -> table: "tenders", sort: { field: "tender_budget", direction: "desc" }, limit: 1.
 `;
@@ -176,7 +193,6 @@ export async function POST(req: Request) {
           filters: [],
           columns: [],
           sort: null,
-          limit: 100,
         }
       }
     },
@@ -334,9 +350,128 @@ export async function POST(req: Request) {
         from.setMonth(from.getMonth() - monthsN);
         mergeDateRangeIntoRequest(fmt(from), fmt(to));
       }
+
+      // 3) "за 2025" / "в 2025 году" / "тендеры за 2024" — весь год: 01.01.YYYY — 31.12.YYYY
+      const yearMatch = text.match(
+        /(?:за|в)\s*(20\d{2})|(20\d{2})\s*год/i,
+      );
+      const yearNum = yearMatch
+        ? parseInt(yearMatch[1] || yearMatch[2], 10)
+        : NaN;
+      if (
+        askedForTenders &&
+        Number.isFinite(yearNum) &&
+        yearNum >= 2000 &&
+        yearNum <= 2100
+      ) {
+        const fromStr = `${yearNum}-01-01`;
+        const toStr = `${yearNum}-12-31`;
+        mergeDateRangeIntoRequest(fromStr, toStr);
+      }
     } catch (e) {
       console.error("Ошибка при нормализации относительных периодов:", e);
     }
+
+    // Нормализация фильтра по статусу тендера:
+    // 1) семантические значения в фильтрах -> точные статусы в БД
+    // 2) если модель вообще не добавила фильтр по статусу, но в тексте запроса явно
+    //    просили «выигранные» или «проигранные» тендеры — добавляем нужный фильтр сами.
+    // 3) если таблица не указана, но в запросе упоминаются тендеры — считаем, что речь про table: \"tenders\".
+    try {
+      const text = latestMessage.toLowerCase();
+      let tr = parsed?.tableRequest;
+      if (!tr || typeof tr !== "object") {
+        tr = parsed.tableRequest = {};
+      }
+
+      if (!tr.table && text.includes("тендер")) {
+        tr.table = "tenders";
+      }
+
+      if (tr.table === "tenders") {
+        const statusValue = (v: unknown) =>
+          typeof v === "string" ? v.trim().toLowerCase() : "";
+        const isWonIntent = (v: string) =>
+          /выигран|побед[аи]|won|победил/.test(v) && !/проигран|lost/.test(v);
+        const isLostIntent = (v: string) =>
+          /проигран|lost|не выиграл|не победил/.test(v);
+        const isCancelledIntent = (v: string) =>
+          /отмен[её]н[а-яё]*/i.test(v) || /отменены/i.test(v);
+
+        const hasWonInText = isWonIntent(text);
+        const hasLostInText = isLostIntent(text);
+        const hasCancelledInText = isCancelledIntent(text);
+
+        const filtersArr: any[] = Array.isArray(tr.filters) ? tr.filters : [];
+
+        // 1) Нормализуем уже существующие фильтры по tender_status
+        const normalized = filtersArr.map((f: any) => {
+          const field = String(f?.field ?? "").toLowerCase();
+          if (field !== "tender_status") return f;
+          const val = statusValue(f.value);
+          if (isWonIntent(val))
+            return {
+              field: "tender_status",
+              operator: "in",
+              value: ["Выигран тендер", "Размещается"],
+            };
+          if (isLostIntent(val))
+            return {
+              field: "tender_status",
+              operator: "in",
+              value: ["Проигран тендер"],
+            };
+          if (isCancelledIntent(val))
+            return {
+              field: "tender_status",
+              operator: "in",
+              value: ["Отмененная"],
+            };
+          return f;
+        });
+
+        const hasStatusFilter = normalized.some(
+          (f: any) =>
+            String(f?.field ?? "").toLowerCase() === "tender_status",
+        );
+
+        // 2) Если фильтра по статусу нет, но в самом тексте запроса явно
+        //    просили выигранные/проигранные тендеры — добавляем нужный фильтр.
+        if (!hasStatusFilter) {
+          if (hasWonInText && !hasLostInText && !hasCancelledInText) {
+            normalized.push({
+              field: "tender_status",
+              operator: "in",
+              value: ["Выигран тендер", "Размещается"],
+            });
+          } else if (hasLostInText && !hasWonInText && !hasCancelledInText) {
+            normalized.push({
+              field: "tender_status",
+              operator: "in",
+              value: ["Проигран тендер"],
+            });
+          } else if (hasCancelledInText && !hasWonInText && !hasLostInText) {
+            normalized.push({
+              field: "tender_status",
+              operator: "in",
+              value: ["Отмененная"],
+            });
+          }
+        }
+
+        tr.filters = normalized;
+      }
+    } catch (e) {
+      console.error("Ошибка при нормализации фильтра tender_status:", e);
+    }
+
+    // Убираем стандартный лимит 200, чтобы показывать все подходящие записи (бэкенд вернёт до DEFAULT_LIMIT)
+    try {
+      const tr = parsed?.tableRequest;
+      if (tr && typeof tr.limit === "number" && tr.limit === 200) {
+        delete tr.limit;
+      }
+    } catch (_) {}
 
     return NextResponse.json({
       reply: content, // Полный текст ответа для чата

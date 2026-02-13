@@ -26,6 +26,9 @@ export type TableRequestLike = {
 };
 
 const DEFAULT_LIMIT = 15000;
+const SUPABASE_PAGE_SIZE = 1000;
+
+type SupabaseQuery = ReturnType<NonNullable<typeof supabaseServer>["from"]>;
 
 function normalizeStringValue(value: unknown): string {
   if (value == null) return "";
@@ -48,6 +51,40 @@ function buildIlikePattern(value: string): string {
   return `%${v}%`;
 }
 
+async function fetchAllRows(
+  baseQuery: SupabaseQuery,
+  requestedLimit: number,
+): Promise<Record<string, unknown>[]> {
+  const allRows: Record<string, unknown>[] = [];
+  let offset = 0;
+
+  while (offset < requestedLimit) {
+    const pageSize = Math.min(SUPABASE_PAGE_SIZE, requestedLimit - offset);
+    const { data, error } = await baseQuery.range(
+      offset,
+      offset + pageSize - 1,
+    );
+
+    if (error) {
+      throw error;
+    }
+
+    if (!data || data.length === 0) {
+      break;
+    }
+
+    allRows.push(...(data as unknown as Record<string, unknown>[]));
+
+    if (data.length < pageSize) {
+      break;
+    }
+
+    offset += data.length;
+  }
+
+  return allRows;
+}
+
 export async function getDbTable(
   tableName: string = "clients",
 ): Promise<TableResultWithError> {
@@ -68,31 +105,28 @@ export async function getDbTable(
     ? (tableName as AllowedTable)
     : "clients";
 
-  const { data, error } = await supabaseServer
-    .from(safeTable)
-    .select("*")
-    .limit(DEFAULT_LIMIT);
+  try {
+    const baseQuery = supabaseServer.from(safeTable).select("*");
+    const rows = await fetchAllRows(baseQuery, DEFAULT_LIMIT);
 
-  if (error) {
+    if (!rows || rows.length === 0) {
+      console.warn(`[Supabase] Таблица ${safeTable} пуста.`);
+      return { columns: [], rows: [] };
+    }
+
+    // Supabase возвращает массив записей { [column]: value }
+    // Преобразуем его в универсальный формат через общий конструктор
+    return buildTableFromRecords(rows, DEFAULT_LIMIT);
+  } catch (error) {
     console.error("[Supabase] Ошибка при запросе таблицы", safeTable, error);
     return {
       columns: [],
       rows: [],
-      error: error.message || "Ошибка подключения к базе данных.",
+      error:
+        (error instanceof Error && error.message) ||
+        "Ошибка подключения к базе данных.",
     };
   }
-
-  if (!data || data.length === 0) {
-    console.warn(`[Supabase] Таблица ${safeTable} пуста.`);
-    return { columns: [], rows: [] };
-  }
-
-  // Supabase возвращает массив записей { [column]: value }
-  // Преобразуем его в универсальный формат через общий конструктор
-  return buildTableFromRecords(
-    data as unknown as Record<string, unknown>[],
-    DEFAULT_LIMIT,
-  );
 }
 
 export async function getDbTableByRequest(
@@ -136,6 +170,14 @@ export async function getDbTableByRequest(
       continue;
     }
 
+    if (op === "in") {
+      const arr = Array.isArray(rawVal) ? rawVal : [rawVal];
+      if (arr.length > 0) {
+        query = query.in(field, arr as any);
+      }
+      continue;
+    }
+
     if (op === "ilike" || op === "contains") {
       const v = normalizeStringValue(rawVal);
       const pattern = buildIlikePattern(v);
@@ -165,33 +207,35 @@ export async function getDbTableByRequest(
   // Сортировка на стороне Supabase (если задана)
   if (request.sort?.field) {
     const sortField = normalizeStringValue(request.sort.field);
-    const dir = (request.sort.direction || "asc").toLowerCase() === "desc"
-      ? "desc"
-      : "asc";
+    const dir =
+      (request.sort.direction || "asc").toLowerCase() === "desc"
+        ? "desc"
+        : "asc";
     if (sortField) {
       query = query.order(sortField, { ascending: dir === "asc" });
     }
   }
 
-  const { data, error } = await query.limit(requestedLimit);
+  try {
+    const rows = await fetchAllRows(query, requestedLimit);
 
-  if (error) {
+    if (!rows || rows.length === 0) {
+      console.warn(
+        `[Supabase] Таблица ${safeTable} пуста или фильтр не дал результатов.`,
+      );
+      return { columns: [], rows: [] };
+    }
+
+    return buildTableFromRecords(rows, requestedLimit);
+  } catch (error) {
     console.error("[Supabase] Ошибка при запросе таблицы", safeTable, error);
     return {
       columns: [],
       rows: [],
-      error: error.message || "Ошибка подключения к базе данных.",
+      error:
+        (error instanceof Error && error.message) ||
+        "Ошибка подключения к базе данных.",
     };
   }
-
-  if (!data || data.length === 0) {
-    console.warn(`[Supabase] Таблица ${safeTable} пуста или фильтр не дал результатов.`);
-    return { columns: [], rows: [] };
-  }
-
-  return buildTableFromRecords(
-    data as unknown as Record<string, unknown>[],
-    requestedLimit,
-  );
 }
 

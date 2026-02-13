@@ -1,10 +1,13 @@
-import { ProtectedHome } from "@/components/ProtectedHome";
+import { ProtectedLayout } from "@/components/ProtectedLayout";
+import { Dashboard } from "@/components/Dashboard";
 import { getDbTable } from "@/lib/dbTable";
 
 export default async function Home() {
   const { columns, rows } = await getDbTable("clients");
 
   return (
-    <ProtectedHome initialColumns={columns} initialRows={rows} />
+    <ProtectedLayout>
+      <Dashboard initialColumns={columns} initialRows={rows} />
+    </ProtectedLayout>
   );
 }
