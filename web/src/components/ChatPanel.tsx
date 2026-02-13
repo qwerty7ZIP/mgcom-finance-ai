@@ -42,8 +42,7 @@ export function ChatPanel({ onApplyRequest }: Props) {
     }
   }, [history, loading]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const sendMessage = async () => {
     const trimmed = message.trim();
     if (!trimmed) return;
 
@@ -86,6 +85,11 @@ export function ChatPanel({ onApplyRequest }: Props) {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await sendMessage();
   };
 
   const applyExample = (text: string) => {
@@ -170,6 +174,12 @@ export function ChatPanel({ onApplyRequest }: Props) {
             placeholder="Задайте вопрос по данным..."
             value={message}
             onChange={(e) => setMessage(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                void sendMessage();
+              }
+            }}
             disabled={loading}
           />
           <button
