@@ -28,7 +28,10 @@ export type TableRequestLike = {
 const DEFAULT_LIMIT = 15000;
 const SUPABASE_PAGE_SIZE = 1000;
 
-type SupabaseQuery = ReturnType<NonNullable<typeof supabaseServer>["from"]>;
+// Тип Supabase-квери сильно отличается между версиями клиента,
+// поэтому здесь используем гибкий тип, а конкретные методы (range и т.д.)
+// проверяем уже на этапе рантайма.
+type SupabaseQuery = any;
 
 function normalizeStringValue(value: unknown): string {
   if (value == null) return "";
@@ -60,7 +63,7 @@ async function fetchAllRows(
 
   while (offset < requestedLimit) {
     const pageSize = Math.min(SUPABASE_PAGE_SIZE, requestedLimit - offset);
-    const { data, error } = await baseQuery.range(
+    const { data, error } = await (baseQuery as any).range(
       offset,
       offset + pageSize - 1,
     );

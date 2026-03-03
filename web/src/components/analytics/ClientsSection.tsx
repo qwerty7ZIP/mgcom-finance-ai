@@ -215,7 +215,10 @@ export function ClientsSection() {
                   <CartesianGrid strokeDasharray="3 3" className="stroke-slate-200 dark:stroke-slate-600" />
                   <XAxis type="number" tickFormatter={(v) => (v >= 1e6 ? `${v / 1e6}M` : `${v / 1e3}K`)} stroke="currentColor" />
                   <YAxis type="category" dataKey="name" width={75} tick={{ fontSize: 10 }} stroke="currentColor" />
-                  <Tooltip formatter={(v: number) => formatRub(v)} labelStyle={{ color: "#000" }} />
+                  <Tooltip
+                    formatter={(v) => formatRub(typeof v === "number" ? v : 0)}
+                    labelStyle={{ color: "#000" }}
+                  />
                   <Bar dataKey="value" fill="hsl(142 71% 45%)" name="Оборот" radius={[0, 4, 4, 0]} />
                 </BarChart>
               </ResponsiveContainer>

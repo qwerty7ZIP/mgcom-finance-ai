@@ -245,7 +245,10 @@ export function TendersSection({ dateFrom, dateTo, agencies }: Props) {
                 <CartesianGrid strokeDasharray="3 3" className="stroke-slate-200 dark:stroke-slate-600" />
                 <XAxis dataKey="name" tick={{ fontSize: 11 }} stroke="currentColor" />
                 <YAxis tick={{ fontSize: 11 }} stroke="currentColor" tickFormatter={(v) => (v >= 1e6 ? `${v / 1e6}M` : `${v / 1e3}K`)} />
-                <Tooltip formatter={(v: number) => [formatRub(v), "Бюджет"]} labelStyle={{ color: "#000" }} />
+                <Tooltip
+                  formatter={(v) => [formatRub(typeof v === "number" ? v : 0), "Бюджет"]}
+                  labelStyle={{ color: "#000" }}
+                />
                 <Line type="monotone" dataKey="value" stroke="hsl(217 91% 60%)" strokeWidth={2} dot={{ r: 3 }} name="Бюджет" />
               </LineChart>
             </ResponsiveContainer>
@@ -274,7 +277,9 @@ export function TendersSection({ dateFrom, dateTo, agencies }: Props) {
                       <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
                     ))}
                   </Pie>
-                  <Tooltip formatter={(v: number) => formatRub(v)} />
+                  <Tooltip
+                    formatter={(v) => formatRub(typeof v === "number" ? v : 0)}
+                  />
                 </PieChart>
               </ResponsiveContainer>
             </div>
@@ -292,7 +297,10 @@ export function TendersSection({ dateFrom, dateTo, agencies }: Props) {
                   <CartesianGrid strokeDasharray="3 3" className="stroke-slate-200 dark:stroke-slate-600" />
                   <XAxis type="number" tickFormatter={(v) => (v >= 1e6 ? `${v / 1e6}M` : `${v / 1e3}K`)} stroke="currentColor" />
                   <YAxis type="category" dataKey="name" width={75} tick={{ fontSize: 10 }} stroke="currentColor" />
-                  <Tooltip formatter={(v: number) => formatRub(v)} labelStyle={{ color: "#000" }} />
+                  <Tooltip
+                    formatter={(v) => formatRub(typeof v === "number" ? v : 0)}
+                    labelStyle={{ color: "#000" }}
+                  />
                   <Bar dataKey="value" fill="hsl(217 91% 60%)" name="Бюджет" radius={[0, 4, 4, 0]} />
                 </BarChart>
               </ResponsiveContainer>
