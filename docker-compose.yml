@@ -1,0 +1,13 @@
+version: "3.9"
+
+services:
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: mgcom-web
+    restart: always
+    env_file:
+      - ./web/.env.production   # путь до твоего env
+    ports:
+      - "3000:3000"
