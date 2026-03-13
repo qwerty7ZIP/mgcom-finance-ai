@@ -2,13 +2,15 @@
 
 import { useState, useRef, useEffect } from "react";
 import { TendersSection } from "./TendersSection";
+import { ManagersSection } from "./ManagersSection";
 import { ClientsSection } from "./ClientsSection";
 import { ContactsSection } from "./ContactsSection";
 
-type Section = "tenders" | "clients" | "contacts";
+type Section = "tenders" | "managers" | "clients" | "contacts";
 
 const sections: { id: Section; label: string }[] = [
   { id: "tenders", label: "Тендеры" },
+  { id: "managers", label: "Менеджеры" },
   { id: "clients", label: "Клиенты" },
   { id: "contacts", label: "Контакты" },
 ];
@@ -22,6 +24,21 @@ const AGENCY_OPTIONS = [
   "AGM",
 ] as const;
 
+const NB_MANAGER_OPTIONS = [
+  "Балаева Екатерина",
+  "Валерий Иванилов",
+  "Протонина Татьяна",
+  "Юрий Папенов",
+  "Ретюнских Анна",
+  "Кривченко Олег",
+  "Анастасия Пономарева",
+  "Тесслер Александр",
+  "Рыбальченко Евгений",
+  "Василевская Инна",
+  "Журавель Дарья",
+  "Жулев Станислав",
+] as const;
+
 export function AnalyticsDashboard() {
   const [activeSection, setActiveSection] = useState<Section>("tenders");
   const [dateFrom, setDateFrom] = useState<string>("");
@@ -29,6 +46,7 @@ export function AnalyticsDashboard() {
   const [selectedAgencies, setSelectedAgencies] = useState<string[]>([]);
   const [agencyDropdownOpen, setAgencyDropdownOpen] = useState(false);
   const agencyDropdownRef = useRef<HTMLDivElement>(null);
+  const [selectedManager, setSelectedManager] = useState<string>("");
 
   const allAgenciesSelected =
     selectedAgencies.length > 0 &&
@@ -167,6 +185,43 @@ export function AnalyticsDashboard() {
             </div>
           </div>
         )}
+
+        {activeSection === "managers" && (
+          <div className="flex items-center gap-3 text-xs text-slate-600 dark:text-slate-300">
+            <div className="flex items-center gap-2">
+              <span className="hidden sm:inline">Менеджер:</span>
+              <select
+                value={selectedManager}
+                onChange={(e) => setSelectedManager(e.target.value)}
+                className="h-8 max-w-[220px] rounded-md border border-slate-200 bg-slate-50 px-2 text-xs text-slate-900 outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-50 dark:focus:border-slate-400"
+              >
+                <option value="">Выберите…</option>
+                {NB_MANAGER_OPTIONS.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="hidden sm:inline">Период:</span>
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                className="h-8 rounded-md border border-slate-200 bg-slate-50 px-2 text-xs text-slate-900 outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-50 dark:focus:border-slate-400"
+              />
+              <span className="text-slate-400">—</span>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                className="h-8 rounded-md border border-slate-200 bg-slate-50 px-2 text-xs text-slate-900 outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-50 dark:focus:border-slate-400"
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Контент выбранного раздела */}
@@ -177,6 +232,14 @@ export function AnalyticsDashboard() {
             dateFrom={dateFrom || undefined}
             dateTo={dateTo || undefined}
             agencies={selectedAgencies}
+          />
+        )}
+        {activeSection === "managers" && (
+          <ManagersSection
+            key={`${selectedManager || "none"}-${dateFrom || "all"}-${dateTo || "all"}`}
+            manager={selectedManager || undefined}
+            dateFrom={dateFrom || undefined}
+            dateTo={dateTo || undefined}
           />
         )}
         {activeSection === "clients" && <ClientsSection />}
