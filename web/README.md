@@ -1,36 +1,66 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# MGCOM Finance AI - Web
 
-## Getting Started
+Next.js 16 (App Router) приложение для внутренних данных MGCOM: таблицы, ИИ-чат, аналитика, диаграмма тендеров и админ-панель пользователей.
 
-First, run the development server:
+## Scripts
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm run build
+npm run start
+npm run lint
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Local run
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+cd web
+npm install
+npm run dev
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Адрес: [http://localhost:3000](http://localhost:3000)
 
-## Learn More
+## Environment variables
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+NEXT_PUBLIC_SUPABASE_URL=...
+NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+SUPABASE_SERVICE_ROLE_KEY=...
+YANDEX_GPT_API_KEY=...
+YANDEX_GPT_FOLDER_ID=...
+# optional
+YANDEX_GPT_MODEL_URI=gpt://<folder-id>/yandexgpt/latest
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Notes:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- Без Supabase приложение покажет пустые данные и сообщения о ненастроенном окружении.
+- Без Yandex GPT переменных `/api/chat` работает в офлайн-режиме (заглушка).
 
-## Deploy on Vercel
+## Routes
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- `/` - таблицы + AI чат
+- `/analytics` - аналитический дашборд
+- `/diagram` - диаграмма тендеров
+- `/tenders/[id]` - карточка тендера
+- `/account` - личный кабинет
+- `/admin` - админ-панель (только для `is_admin = true`)
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Access model
+
+Права лежат в `auth.users.raw_user_meta_data` (Supabase):
+
+```json
+{
+  "is_admin": true,
+  "access": {
+    "diagram": true,
+    "tables": true,
+    "analytics": true
+  }
+}
+```
+
+- Админ получает полный доступ ко всем разделам.
+- Если у пользователя нет доступа ни к одному из разделов, показывается заглушка: `Попросите администратора о доступе`.

@@ -2,7 +2,10 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { supabaseBrowser } from "@/lib/supabaseBrowser";
+import { resolveAccessFromUser } from "@/lib/access";
 
 const navItems = [
   { href: "/diagram", label: "Диаграмма" },
@@ -12,6 +15,33 @@ const navItems = [
 
 export function AppHeader() {
   const pathname = usePathname();
+  const [canDiagram, setCanDiagram] = useState(true);
+  const [canTables, setCanTables] = useState(true);
+  const [canAnalytics, setCanAnalytics] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    if (!supabaseBrowser) return;
+    supabaseBrowser.auth.getUser().then(({ data: { user } }) => {
+      if (!mounted) return;
+      const access = resolveAccessFromUser(user ?? null);
+      setCanDiagram(access.sections.diagram);
+      setCanTables(access.sections.tables);
+      setCanAnalytics(access.sections.analytics);
+      setIsAdmin(access.isAdmin);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const filteredNavItems = navItems.filter((n) => {
+    if (n.href === "/diagram") return canDiagram;
+    if (n.href === "/") return canTables;
+    if (n.href === "/analytics") return canAnalytics;
+    return true;
+  });
 
   return (
     <header className="flex h-16 shrink-0 items-center justify-between gap-4 border-b border-slate-200 bg-white/80 px-6 py-3 backdrop-blur-sm dark:border-slate-800 dark:bg-slate-900/70">
@@ -30,7 +60,7 @@ export function AppHeader() {
       </div>
       <div className="flex items-center gap-3">
         <nav className="flex items-center gap-1" aria-label="Разделы приложения">
-          {navItems.map(({ href, label }) => {
+          {filteredNavItems.map(({ href, label }) => {
             const isActive =
               href === "/"
                 ? pathname === "/"
@@ -49,6 +79,18 @@ export function AppHeader() {
               </Link>
             );
           })}
+          {isAdmin && (
+            <Link
+              href="/admin"
+              className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                pathname?.startsWith("/admin")
+                  ? "bg-slate-900 text-amber-300 dark:bg-slate-100 dark:text-slate-900"
+                  : "text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
+              }`}
+            >
+              Админка
+            </Link>
+          )}
         </nav>
         <Link
           href="/account"
