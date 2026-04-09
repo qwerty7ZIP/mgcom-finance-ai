@@ -7,6 +7,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 const navItems = [
   { href: "/", label: "Таблицы" },
   { href: "/analytics", label: "Аналитика" },
+  { href: "/diagram", label: "Диаграмма" },
 ] as const;
 
 export function AppHeader() {
