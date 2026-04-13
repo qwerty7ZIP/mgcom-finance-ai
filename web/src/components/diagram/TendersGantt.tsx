@@ -20,7 +20,6 @@ type GanttItem = {
 };
 
 const ROW_HEIGHT = 44;
-const ROW_OVERSCAN = 6;
 
 const SCALE_DAY_MS: Record<Scale, number> = {
   day: 24 * 60 * 60 * 1000,
@@ -320,16 +319,6 @@ export function TendersGantt() {
     return { ts, label };
   }).filter((_, i) => (scale === "day" ? true : scale === "week" ? i % 7 === 0 : i % 30 === 0));
 
-  const visibleStart = Math.max(
-    0,
-    Math.floor(viewport.top / ROW_HEIGHT) - ROW_OVERSCAN,
-  );
-  const visibleEnd = Math.min(
-    items.length,
-    Math.ceil((viewport.top + viewport.height) / ROW_HEIGHT) + ROW_OVERSCAN,
-  );
-  const visibleItems = items.slice(visibleStart, visibleEnd);
-
   return (
     <div className="flex flex-1 flex-col overflow-hidden px-4 py-4 lg:px-6 lg:py-5">
       <div className="mb-4 rounded-xl border border-slate-200 bg-white/90 p-3 shadow-sm dark:border-slate-700 dark:bg-slate-900/80">
@@ -402,7 +391,7 @@ export function TendersGantt() {
             </div>
           </div>
 
-          <div className="relative" style={{ height: items.length * ROW_HEIGHT }}>
+          <div className="relative">
             {todayLeft >= 0 && todayLeft <= chartWidth && (
               <div
                 className="pointer-events-none absolute top-0 z-10 h-full w-[2px] bg-red-500"
@@ -410,8 +399,7 @@ export function TendersGantt() {
               />
             )}
 
-            {visibleItems.map((it, visibleIdx) => {
-              const idx = visibleStart + visibleIdx;
+            {items.map((it) => {
               const startDays = (it.start.getTime() - timeline.viewportStart) / SCALE_DAY_MS.day;
               const endDays = (it.end.getTime() - timeline.viewportStart) / SCALE_DAY_MS.day;
               const left = Math.max(0, startDays * pxPerDay);
@@ -435,8 +423,7 @@ export function TendersGantt() {
               return (
                 <div
                   key={it.id}
-                  className="absolute left-0 right-0 grid grid-cols-[300px_1fr] border-b border-slate-100 dark:border-slate-800"
-                  style={{ top: idx * ROW_HEIGHT, height: ROW_HEIGHT }}
+                  className="grid grid-cols-[300px_1fr] border-b border-slate-100 dark:border-slate-800"
                 >
                   <div className="sticky left-0 z-10 truncate border-r border-slate-200 bg-white/95 px-3 py-2 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-900/95 dark:text-slate-200">
                     <button
