@@ -24,6 +24,7 @@ export type TableRequestLike = {
   sort?: TableSort | null;
   limit?: number;
   columns?: string[];
+  offset?: number;
 };
 
 const DEFAULT_LIMIT = 15000;
@@ -271,6 +272,10 @@ export async function getDbRowsByRequest(
     typeof request.limit === "number" && request.limit > 0
       ? Math.min(request.limit, DEFAULT_LIMIT)
       : DEFAULT_LIMIT;
+  const requestedOffset =
+    typeof request.offset === "number" && request.offset >= 0
+      ? request.offset
+      : 0;
 
   const requestedColumns = Array.isArray(request.columns)
     ? request.columns.map((c) => normalizeStringValue(c)).filter(Boolean)
@@ -311,6 +316,17 @@ export async function getDbRowsByRequest(
   }
 
   try {
+    if (requestedOffset > 0 || requestedLimit < DEFAULT_LIMIT) {
+      const { data, error } = await (query as any).range(
+        requestedOffset,
+        requestedOffset + requestedLimit - 1,
+      );
+      if (error) throw error;
+      return {
+        rows: (data ?? []) as unknown as Record<string, unknown>[],
+      };
+    }
+
     const rows = await fetchAllRows(query, requestedLimit);
     return { rows };
   } catch (error) {

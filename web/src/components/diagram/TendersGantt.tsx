@@ -22,7 +22,7 @@ type GanttItem = {
 
 const ROW_HEIGHT = 44;
 const ROW_OVERSCAN = 12;
-const INITIAL_LOAD_LIMIT = 2000;
+const PAGE_SIZE = 1200;
 
 const SCALE_DAY_MS: Record<Scale, number> = {
   day: 24 * 60 * 60 * 1000,
@@ -98,7 +98,7 @@ function toItem(row: DataRow, idx: number): GanttItem | null {
 
 export function TendersGantt() {
   const router = useRouter();
-  const [rows, setRows] = useState<DataRow[]>([]);
+  const [items, setItems] = useState<GanttItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [backgroundLoading, setBackgroundLoading] = useState(false);
@@ -117,6 +117,11 @@ export function TendersGantt() {
     if (!id) return;
     router.push(`/tenders/${encodeURIComponent(id)}`);
   };
+
+  const parseRowsToItems = (rows: DataRow[], baseIndex = 0): GanttItem[] =>
+    rows
+      .map((r, i) => toItem(r, baseIndex + i))
+      .filter((x): x is GanttItem => x !== null);
 
   useEffect(() => {
     let cancelled = false;
@@ -143,14 +148,11 @@ export function TendersGantt() {
       },
     };
 
-    const fetchRows = async (limit?: number) => {
-      const body =
-        typeof limit === "number"
-          ? {
-              ...requestBodyBase,
-              tableRequest: { ...requestBodyBase.tableRequest, limit },
-            }
-          : requestBodyBase;
+    const fetchRowsPage = async (offset: number, limit: number) => {
+      const body = {
+        ...requestBodyBase,
+        tableRequest: { ...requestBodyBase.tableRequest, limit, offset },
+      };
       const res = await fetch("/api/data", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -161,33 +163,43 @@ export function TendersGantt() {
     };
 
     setLoading(true);
-    fetchRows(INITIAL_LOAD_LIMIT)
+    fetchRowsPage(0, PAGE_SIZE)
       .then((initialData) => {
         if (cancelled) return;
         if (initialData.error) {
           setError(initialData.error);
-          setRows([]);
+          setItems([]);
           setLoading(false);
           return;
         }
 
         const initialRows = initialData.rows ?? [];
         setError(null);
-        setRows(initialRows);
+        setItems(parseRowsToItems(initialRows, 0));
         setLoading(false);
 
-        if (initialRows.length < INITIAL_LOAD_LIMIT) return;
+        if (initialRows.length < PAGE_SIZE) return;
 
         setBackgroundLoading(true);
-        fetchRows()
-          .then((fullData) => {
+        let offset = PAGE_SIZE;
+        const loadRest = async () => {
+          while (!cancelled) {
+            const pageData = await fetchRowsPage(offset, PAGE_SIZE);
             if (cancelled) return;
-            if (fullData.error) return;
-            const fullRows = fullData.rows ?? [];
-            if (fullRows.length > initialRows.length) {
-              setRows(fullRows);
+            if (pageData.error) return;
+            const pageRows = (pageData.rows ?? []) as DataRow[];
+            if (pageRows.length === 0) return;
+
+            const parsedPage = parseRowsToItems(pageRows, offset);
+            if (parsedPage.length > 0) {
+              setItems((prev) => [...prev, ...parsedPage]);
             }
-          })
+            if (pageRows.length < PAGE_SIZE) return;
+            offset += PAGE_SIZE;
+          }
+        };
+
+        loadRest()
           .catch(() => {
             // Фоновая догрузка не должна ломать страницу.
           })
@@ -198,7 +210,7 @@ export function TendersGantt() {
       .catch(() => {
         if (!cancelled) {
           setError("Не удалось загрузить данные для диаграммы");
-          setRows([]);
+          setItems([]);
           setLoading(false);
         }
       });
@@ -217,14 +229,6 @@ export function TendersGantt() {
       height: container.clientHeight,
     });
   }, [loading]);
-
-  const items = useMemo(
-    () =>
-      rows
-        .map((r, i) => toItem(r, i))
-        .filter((x): x is GanttItem => x !== null),
-    [rows],
-  );
 
   const timeline = useMemo(() => {
     if (!items.length) return null;
