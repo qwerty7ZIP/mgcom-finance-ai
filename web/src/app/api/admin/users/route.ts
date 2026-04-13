@@ -63,7 +63,6 @@ export async function GET(req: NextRequest) {
       id: u.id,
       email: u.email ?? "",
       createdAt: u.created_at,
-      lastSignInAt: u.last_sign_in_at,
       isAdmin: access.isAdmin,
       access: access.sections,
     };

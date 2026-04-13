@@ -13,7 +13,6 @@ type AdminUser = {
   id: string;
   email: string;
   createdAt: string;
-  lastSignInAt: string | null;
   isAdmin: boolean;
   access: Access;
 };
@@ -249,10 +248,6 @@ export function AdminPanel() {
                 </p>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
                   Создан: {new Date(u.createdAt).toLocaleString()}
-                </p>
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Последний вход:{" "}
-                  {u.lastSignInAt ? new Date(u.lastSignInAt).toLocaleString() : "Никогда"}
                 </p>
               </div>
               <button
