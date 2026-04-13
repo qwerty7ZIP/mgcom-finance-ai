@@ -118,7 +118,25 @@ export function TendersGantt() {
     fetch("/api/data", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tableRequest: { table: "tenders" } }),
+      body: JSON.stringify({
+        rowsOnly: true,
+        tableRequest: {
+          table: "tenders",
+          columns: [
+            "id",
+            "id_pf",
+            "client",
+            "project",
+            "agency",
+            "manager",
+            "tender_status",
+            "tender_budget",
+            "tender_start",
+            "tender_end",
+            "tender_dl",
+          ],
+        },
+      }),
     })
       .then((res) => res.json())
       .then((data) => {

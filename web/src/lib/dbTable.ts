@@ -23,10 +23,11 @@ export type TableRequestLike = {
   filters?: TableFilter[];
   sort?: TableSort | null;
   limit?: number;
+  columns?: string[];
 };
 
 const DEFAULT_LIMIT = 15000;
-const SUPABASE_PAGE_SIZE = 1000;
+const SUPABASE_PAGE_SIZE = 5000;
 
 // Тип Supabase-квери сильно отличается между версиями клиента,
 // поэтому здесь используем гибкий тип, а конкретные методы (range и т.д.)
@@ -157,7 +158,13 @@ export async function getDbTableByRequest(
       ? Math.min(request.limit, DEFAULT_LIMIT)
       : DEFAULT_LIMIT;
 
-  let query = supabaseServer.from(safeTable).select("*");
+  const requestedColumns = Array.isArray(request.columns)
+    ? request.columns.map((c) => normalizeStringValue(c)).filter(Boolean)
+    : [];
+  const selectClause =
+    requestedColumns.length > 0 ? requestedColumns.join(",") : "*";
+
+  let query = supabaseServer.from(safeTable).select(selectClause);
 
   // Применяем фильтры на стороне Supabase (в т.ч. ilike)
   const filters = Array.isArray(request.filters) ? request.filters : [];
@@ -234,6 +241,80 @@ export async function getDbTableByRequest(
     console.error("[Supabase] Ошибка при запросе таблицы", safeTable, error);
     return {
       columns: [],
+      rows: [],
+      error:
+        (error instanceof Error && error.message) ||
+        "Ошибка подключения к базе данных.",
+    };
+  }
+}
+
+export async function getDbRowsByRequest(
+  request: TableRequestLike,
+): Promise<{ rows: Record<string, unknown>[]; error?: string }> {
+  const tableName = request.table || "clients";
+
+  if (!supabaseServer) {
+    return {
+      rows: [],
+      error: "Supabase не настроен. Проверьте переменные окружения (.env.local).",
+    };
+  }
+
+  const safeTable: AllowedTable = ALLOWED_TABLES.includes(
+    tableName as AllowedTable,
+  )
+    ? (tableName as AllowedTable)
+    : "clients";
+
+  const requestedLimit =
+    typeof request.limit === "number" && request.limit > 0
+      ? Math.min(request.limit, DEFAULT_LIMIT)
+      : DEFAULT_LIMIT;
+
+  const requestedColumns = Array.isArray(request.columns)
+    ? request.columns.map((c) => normalizeStringValue(c)).filter(Boolean)
+    : [];
+  const selectClause =
+    requestedColumns.length > 0 ? requestedColumns.join(",") : "*";
+
+  let query = supabaseServer.from(safeTable).select(selectClause);
+
+  const filters = Array.isArray(request.filters) ? request.filters : [];
+  for (const f of filters) {
+    const field = normalizeStringValue(f.field);
+    const op = normalizeStringValue(f.operator).toLowerCase();
+    const rawVal = f.value;
+    if (!field || !op) continue;
+    if (op === "eq") query = query.eq(field, rawVal as any);
+    else if (op === "in") {
+      const arr = Array.isArray(rawVal) ? rawVal : [rawVal];
+      if (arr.length > 0) query = query.in(field, arr as any);
+    } else if (op === "ilike" || op === "contains") {
+      const pattern = buildIlikePattern(normalizeStringValue(rawVal));
+      if (pattern) query = query.ilike(field, pattern);
+    } else if (op === "gte") query = query.gte(field, rawVal as any);
+    else if (op === "lte") query = query.lte(field, rawVal as any);
+    else if (op === "gt") query = query.gt(field, rawVal as any);
+    else if (op === "lt") query = query.lt(field, rawVal as any);
+  }
+
+  if (request.sort?.field) {
+    const sortField = normalizeStringValue(request.sort.field);
+    const dir =
+      (request.sort.direction || "asc").toLowerCase() === "desc"
+        ? "desc"
+        : "asc";
+    if (sortField) {
+      query = query.order(sortField, { ascending: dir === "asc" });
+    }
+  }
+
+  try {
+    const rows = await fetchAllRows(query, requestedLimit);
+    return { rows };
+  } catch (error) {
+    return {
       rows: [],
       error:
         (error instanceof Error && error.message) ||

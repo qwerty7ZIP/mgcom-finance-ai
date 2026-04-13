@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getDbTable, getDbTableByRequest } from "@/lib/dbTable";
+import { getDbRowsByRequest, getDbTable, getDbTableByRequest } from "@/lib/dbTable";
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -20,11 +20,22 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     const body = (await req.json().catch(() => null)) as
-      | { tableRequest?: any; table?: string; filters?: any; sort?: any; limit?: any }
+      | {
+          tableRequest?: any;
+          table?: string;
+          filters?: any;
+          sort?: any;
+          limit?: any;
+          rowsOnly?: boolean;
+        }
       | null;
 
     const tableRequest = body?.tableRequest ?? body ?? {};
-    const data = await getDbTableByRequest(tableRequest);
+    const rowsOnly =
+      body?.rowsOnly === true || tableRequest?.rowsOnly === true;
+    const data = rowsOnly
+      ? await getDbRowsByRequest(tableRequest)
+      : await getDbTableByRequest(tableRequest);
     return NextResponse.json(data);
   } catch (error) {
     console.error("Error fetching table data (POST):", error);
