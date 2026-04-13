@@ -45,6 +45,13 @@ const FUTURE_STATUS_COLORS: Record<string, string> = {
   Завершенная: "bg-slate-400/20 border border-dashed border-slate-300/70",
 };
 
+function toIsoDateOnly(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 function parseDate(value: unknown): Date | null {
   if (value instanceof Date) return value;
   if (typeof value === "string" && value.trim()) {
@@ -91,25 +98,56 @@ export function TendersGantt() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [scale, setScale] = useState<Scale>("week");
-  const [futureTooltip, setFutureTooltip] = useState<{
-    item: GanttItem;
-    x: number;
-    y: number;
-  } | null>(null);
-  const [viewport, setViewport] = useState({ top: 0, height: 800 });
   const didInitialTodayScrollRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const scrollRafRef = useRef<number | null>(null);
+  const todayRef = useRef(new Date());
 
   const openTenderCard = (id: string) => {
     if (!id) return;
     router.push(`/tenders/${encodeURIComponent(id)}`);
   };
 
-  const parseRowsToItems = (rows: DataRow[], baseIndex = 0): GanttItem[] =>
-    rows
-      .map((r, i) => toItem(r, baseIndex + i))
+  const parseRowsToItems = (rows: DataRow[], baseIndex = 0): GanttItem[] => {
+    const dateCache = new Map<string, Date | null>();
+    const parseCachedDate = (raw: unknown): Date | null => {
+      if (raw instanceof Date) return raw;
+      if (typeof raw !== "string") return null;
+      const key = raw.trim();
+      if (!key) return null;
+      if (dateCache.has(key)) return dateCache.get(key) ?? null;
+      const parsed = parseDate(key);
+      dateCache.set(key, parsed);
+      return parsed;
+    };
+
+    return rows
+      .map((row, i) => {
+        const start = parseCachedDate(row.tender_start ?? row.Tender_start);
+        const endRaw = parseCachedDate(
+          row.tender_end ?? row.tender_dl ?? row.Tender_end,
+        );
+        if (!start) return null;
+        const end = endRaw && endRaw >= start ? endRaw : start;
+        const futureStart = new Date(start);
+        futureStart.setFullYear(futureStart.getFullYear() + 1);
+        const futureEnd = new Date(
+          futureStart.getTime() + 21 * 24 * 60 * 60 * 1000,
+        );
+        return {
+          id: getStr(row, "id_pf") || getStr(row, "id") || `row-${baseIndex + i}`,
+          client: getStr(row, "client") || "—",
+          project: getStr(row, "project") || "—",
+          agency: getStr(row, "agency") || "—",
+          manager: getStr(row, "manager") || "—",
+          status: getStr(row, "tender_status") || "Без статуса",
+          start,
+          end,
+          futureStart,
+          futureEnd,
+        } satisfies GanttItem;
+      })
       .filter((x): x is GanttItem => x !== null);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -120,6 +158,30 @@ export function TendersGantt() {
       tableRequest: {
         table: "tenders",
         sort: { field: "tender_start", direction: "asc" as const },
+        filters: [
+          {
+            field: "tender_start",
+            operator: "gte",
+            value: toIsoDateOnly(
+              new Date(
+                todayRef.current.getFullYear() - 1,
+                todayRef.current.getMonth(),
+                todayRef.current.getDate(),
+              ),
+            ),
+          },
+          {
+            field: "tender_start",
+            operator: "lte",
+            value: toIsoDateOnly(
+              new Date(
+                todayRef.current.getFullYear() + 1,
+                todayRef.current.getMonth(),
+                todayRef.current.getDate(),
+              ),
+            ),
+          },
+        ],
         columns: [
           "id",
           "id_pf",
@@ -175,15 +237,6 @@ export function TendersGantt() {
     };
   }, []);
 
-  useEffect(() => {
-    const container = scrollRef.current;
-    if (!container) return;
-    setViewport({
-      top: container.scrollTop,
-      height: container.clientHeight,
-    });
-  }, [loading]);
-
   const timeline = useMemo(() => {
     if (!items.length) return null;
     const minStart = items[0].start.getTime();
@@ -197,10 +250,35 @@ export function TendersGantt() {
       viewportStart: minStart,
       viewportEnd: maxEnd,
     };
-  }, [items, scale]);
+  }, [items]);
 
   const pxPerDay = scale === "day" ? 36 : scale === "week" ? 14 : 6;
-  const todayTs = Date.now();
+  const todayTs = todayRef.current.getTime();
+  const ticks = useMemo(() => {
+    if (!timeline) return [];
+    const totalDaysLocal = Math.max(
+      1,
+      Math.ceil((timeline.viewportEnd - timeline.viewportStart) / SCALE_DAY_MS.day),
+    );
+    return Array.from({ length: totalDaysLocal + 1 }, (_, i) => {
+      const ts = timeline.viewportStart + i * SCALE_DAY_MS.day;
+      const d = new Date(ts);
+      let label = "";
+      if (scale === "day") label = `${d.getDate()}.${d.getMonth() + 1}`;
+      if (scale === "week") {
+        const weekNum = Math.ceil(
+          (d.getDate() + new Date(d.getFullYear(), d.getMonth(), 1).getDay()) / 7,
+        );
+        label = `W${weekNum} ${String(d.getMonth() + 1).padStart(2, "0")}`;
+      }
+      if (scale === "month") {
+        label = `${String(d.getMonth() + 1).padStart(2, "0")}.${d.getFullYear()}`;
+      }
+      return { ts, label };
+    }).filter((_, i) =>
+      scale === "day" ? true : scale === "week" ? i % 7 === 0 : i % 30 === 0,
+    );
+  }, [timeline, scale]);
 
   const scrollToToday = () => {
     if (!timeline || !scrollRef.current || items.length === 0) return;
@@ -265,15 +343,6 @@ export function TendersGantt() {
     });
   }, [loading, timeline, items.length]);
 
-  useEffect(() => {
-    return () => {
-      if (scrollRafRef.current != null) {
-        window.cancelAnimationFrame(scrollRafRef.current);
-        scrollRafRef.current = null;
-      }
-    };
-  }, []);
-
   if (loading) {
     return (
       <div className="flex flex-1 items-center justify-center">
@@ -305,19 +374,6 @@ export function TendersGantt() {
   const leftColWidth = 300;
   const chartWidth = Math.max(1200, totalDays * pxPerDay);
   const todayLeft = ((todayTs - timeline.viewportStart) / SCALE_DAY_MS.day) * pxPerDay;
-
-  const ticks = Array.from({ length: totalDays + 1 }, (_, i) => {
-    const ts = timeline.viewportStart + i * SCALE_DAY_MS.day;
-    const d = new Date(ts);
-    let label = "";
-    if (scale === "day") label = `${d.getDate()}.${d.getMonth() + 1}`;
-    if (scale === "week") {
-      const weekNum = Math.ceil((d.getDate() + new Date(d.getFullYear(), d.getMonth(), 1).getDay()) / 7);
-      label = `W${weekNum} ${String(d.getMonth() + 1).padStart(2, "0")}`;
-    }
-    if (scale === "month") label = `${String(d.getMonth() + 1).padStart(2, "0")}.${d.getFullYear()}`;
-    return { ts, label };
-  }).filter((_, i) => (scale === "day" ? true : scale === "week" ? i % 7 === 0 : i % 30 === 0));
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden px-4 py-4 lg:px-6 lg:py-5">
@@ -356,17 +412,6 @@ export function TendersGantt() {
       <div
         ref={scrollRef}
         className="relative flex-1 overflow-auto rounded-xl border border-slate-200 bg-white/90 dark:border-slate-700 dark:bg-slate-900/80"
-        onScroll={(e) => {
-          const el = e.currentTarget;
-          if (scrollRafRef.current != null) return;
-          scrollRafRef.current = window.requestAnimationFrame(() => {
-            scrollRafRef.current = null;
-            setViewport({
-              top: el.scrollTop,
-              height: el.clientHeight,
-            });
-          });
-        }}
       >
         <div style={{ width: leftColWidth + chartWidth }} className="min-h-full">
           <div className="sticky top-0 z-20 border-b border-slate-200 bg-slate-100/95 dark:border-slate-700 dark:bg-slate-900/95">
@@ -451,21 +496,6 @@ export function TendersGantt() {
                       className={`absolute top-2 h-7 cursor-pointer rounded-md px-2 py-1 text-[10px] font-medium text-slate-100 shadow-sm ${futureBarColor}`}
                       style={{ left: futureLeft, width: futureWidth }}
                       onClick={() => openTenderCard(it.id)}
-                      onMouseEnter={(e) =>
-                        setFutureTooltip({
-                          item: it,
-                          x: e.clientX,
-                          y: e.clientY,
-                        })
-                      }
-                      onMouseMove={(e) =>
-                        setFutureTooltip((prev) =>
-                          prev
-                            ? { ...prev, x: e.clientX, y: e.clientY, item: it }
-                            : { item: it, x: e.clientX, y: e.clientY },
-                        )
-                      }
-                      onMouseLeave={() => setFutureTooltip(null)}
                     >
                       <span className="truncate opacity-80">Будущий</span>
                     </div>
@@ -477,32 +507,6 @@ export function TendersGantt() {
         </div>
       </div>
 
-      {futureTooltip && (
-        <div
-          className="pointer-events-none fixed z-[100] w-64 rounded-xl border border-slate-700 bg-slate-900/95 p-2 text-[11px] text-slate-100 shadow-xl"
-          style={{
-            left: futureTooltip.x + 14,
-            top: futureTooltip.y + 14,
-          }}
-        >
-          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-amber-300">
-            Будущий тендер
-          </p>
-          <p className="truncate font-medium text-slate-50">
-            {futureTooltip.item.client} / {futureTooltip.item.project}
-          </p>
-          <p className="mt-0.5 text-slate-300">
-            Статус: <span className="text-slate-100">{futureTooltip.item.status}</span>
-          </p>
-          <p className="text-slate-300">
-            Период:{" "}
-            <span className="text-slate-100">
-              {futureTooltip.item.futureStart.toLocaleDateString()} -{" "}
-              {futureTooltip.item.futureEnd.toLocaleDateString()}
-            </span>
-          </p>
-        </div>
-      )}
     </div>
   );
 }
