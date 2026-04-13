@@ -22,6 +22,7 @@ type GanttItem = {
 
 const ROW_HEIGHT = 44;
 const ROW_OVERSCAN = 12;
+const INITIAL_LOAD_LIMIT = 2000;
 
 const SCALE_DAY_MS: Record<Scale, number> = {
   day: 24 * 60 * 60 * 1000,
@@ -100,6 +101,7 @@ export function TendersGantt() {
   const [rows, setRows] = useState<DataRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [backgroundLoading, setBackgroundLoading] = useState(false);
   const [scale, setScale] = useState<Scale>("week");
   const [futureTooltip, setFutureTooltip] = useState<{
     item: GanttItem;
@@ -118,53 +120,92 @@ export function TendersGantt() {
 
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
+
+    const requestBodyBase = {
+      rowsOnly: true,
+      tableRequest: {
+        table: "tenders",
+        sort: { field: "tender_start", direction: "asc" as const },
+        columns: [
+          "id",
+          "id_pf",
+          "client",
+          "project",
+          "agency",
+          "manager",
+          "tender_status",
+          "tender_budget",
+          "tender_start",
+          "tender_end",
+          "tender_dl",
+        ],
+      },
+    };
+
+    const fetchRows = async (limit?: number) => {
+      const body =
+        typeof limit === "number"
+          ? {
+              ...requestBodyBase,
+              tableRequest: { ...requestBodyBase.tableRequest, limit },
+            }
+          : requestBodyBase;
+      const res = await fetch("/api/data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      return res.json();
+    };
+
     setLoading(true);
-    fetch("/api/data", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        rowsOnly: true,
-        tableRequest: {
-          table: "tenders",
-          columns: [
-            "id",
-            "id_pf",
-            "client",
-            "project",
-            "agency",
-            "manager",
-            "tender_status",
-            "tender_budget",
-            "tender_start",
-            "tender_end",
-            "tender_dl",
-          ],
-        },
-      }),
-    })
-      .then((res) => res.json())
-      .then((data) => {
+    fetchRows(INITIAL_LOAD_LIMIT)
+      .then((initialData) => {
         if (cancelled) return;
-        if (data.error) {
-          setError(data.error);
+        if (initialData.error) {
+          setError(initialData.error);
           setRows([]);
-        } else {
-          setError(null);
-          setRows(data.rows ?? []);
+          setLoading(false);
+          return;
         }
+
+        const initialRows = initialData.rows ?? [];
+        setError(null);
+        setRows(initialRows);
+        setLoading(false);
+
+        if (initialRows.length < INITIAL_LOAD_LIMIT) return;
+
+        setBackgroundLoading(true);
+        fetchRows()
+          .then((fullData) => {
+            if (cancelled) return;
+            if (fullData.error) return;
+            const fullRows = fullData.rows ?? [];
+            if (fullRows.length > initialRows.length) {
+              setRows(fullRows);
+            }
+          })
+          .catch(() => {
+            // Фоновая догрузка не должна ломать страницу.
+          })
+          .finally(() => {
+            if (!cancelled) setBackgroundLoading(false);
+          });
       })
       .catch(() => {
         if (!cancelled) {
           setError("Не удалось загрузить данные для диаграммы");
           setRows([]);
+          setLoading(false);
         }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
       });
 
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, []);
 
@@ -181,8 +222,7 @@ export function TendersGantt() {
     () =>
       rows
         .map((r, i) => toItem(r, i))
-        .filter((x): x is GanttItem => x !== null)
-        .sort((a, b) => a.start.getTime() - b.start.getTime()),
+        .filter((x): x is GanttItem => x !== null),
     [rows],
   );
 
@@ -346,6 +386,11 @@ export function TendersGantt() {
             Диаграмма тендеров (Гант)
           </h1>
           <div className="ml-auto flex items-center gap-2 text-xs">
+            {backgroundLoading && (
+              <span className="mr-2 text-amber-600 dark:text-amber-400">
+                Догружаем все записи...
+              </span>
+            )}
             <span className="text-slate-500 dark:text-slate-400">Масштаб:</span>
             {(["day", "week", "month"] as const).map((s) => (
               <button
