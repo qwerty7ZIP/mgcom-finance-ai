@@ -103,9 +103,19 @@ export function TendersGantt() {
     x: number;
     y: number;
   } | null>(null);
+  const [isRightDragging, setIsRightDragging] = useState(false);
   const didInitialTodayScrollRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const isRightDragRef = useRef(false);
+  const suppressClickRef = useRef(false);
+  const dragStartRef = useRef({
+    x: 0,
+    y: 0,
+    left: 0,
+    top: 0,
+    moved: 0,
+  });
 
   const openTenderCard = (id: string) => {
     if (!id) return;
@@ -245,6 +255,75 @@ export function TendersGantt() {
     });
   }, [loading, timeline, items.length]);
 
+  const startRightDrag = (e: React.MouseEvent<HTMLDivElement>) => {
+    const isPrimary = e.button === 0;
+    const isRightClick = e.button === 2 || (e.button === 0 && e.ctrlKey);
+    const isPanGesture = isPrimary || isRightClick;
+    if (!isPanGesture || !scrollRef.current) return;
+
+    const container = scrollRef.current;
+    isRightDragRef.current = true;
+    setIsRightDragging(true);
+    dragStartRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      left: container.scrollLeft,
+      top: container.scrollTop,
+      moved: 0,
+    };
+    setFutureTooltip(null);
+    document.body.classList.add("select-none");
+    e.preventDefault();
+  };
+
+  useEffect(() => {
+    const onMouseMove = (e: MouseEvent) => {
+      if (!isRightDragRef.current || !scrollRef.current) return;
+      const container = scrollRef.current;
+      const dx = e.clientX - dragStartRef.current.x;
+      const dy = e.clientY - dragStartRef.current.y;
+      dragStartRef.current.moved = Math.max(
+        dragStartRef.current.moved,
+        Math.abs(dx) + Math.abs(dy),
+      );
+      container.scrollLeft = dragStartRef.current.left - dx;
+      container.scrollTop = dragStartRef.current.top - dy;
+      e.preventDefault();
+    };
+
+    const stop = () => {
+      if (!isRightDragRef.current) return;
+      isRightDragRef.current = false;
+      setIsRightDragging(false);
+      suppressClickRef.current = dragStartRef.current.moved > 6;
+      document.body.classList.remove("select-none");
+    };
+
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", stop);
+    window.addEventListener("blur", stop);
+
+    return () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", stop);
+      window.removeEventListener("blur", stop);
+      document.body.classList.remove("select-none");
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!suppressClickRef.current) return;
+    const t = window.setTimeout(() => {
+      suppressClickRef.current = false;
+    }, 0);
+    return () => window.clearTimeout(t);
+  }, [isRightDragging]);
+
+  const handleTenderOpen = (id: string) => {
+    if (suppressClickRef.current) return;
+    openTenderCard(id);
+  };
+
   if (loading) {
     return (
       <div className="flex flex-1 items-center justify-center">
@@ -326,7 +405,11 @@ export function TendersGantt() {
 
       <div
         ref={scrollRef}
-        className="relative flex-1 overflow-auto rounded-xl border border-slate-200 bg-white/90 dark:border-slate-700 dark:bg-slate-900/80"
+        className={`relative flex-1 overflow-auto rounded-xl border border-slate-200 bg-white/90 dark:border-slate-700 dark:bg-slate-900/80 ${
+          isRightDragging ? "cursor-grabbing select-none" : "cursor-default select-none"
+        }`}
+        onContextMenu={(e) => e.preventDefault()}
+        onMouseDown={startRightDrag}
       >
         <div style={{ width: leftColWidth + chartWidth }} className="min-h-full">
           <div className="sticky top-0 z-20 border-b border-slate-200 bg-slate-100/95 dark:border-slate-700 dark:bg-slate-900/95">
@@ -391,7 +474,7 @@ export function TendersGantt() {
                   <div className="sticky left-0 z-10 truncate border-r border-slate-200 bg-white/95 px-3 py-2 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-900/95 dark:text-slate-200">
                     <button
                       type="button"
-                      onClick={() => openTenderCard(it.id)}
+                      onClick={() => handleTenderOpen(it.id)}
                       className="truncate text-left font-medium hover:text-slate-900 dark:hover:text-white"
                       title="Открыть карточку тендера"
                     >
@@ -406,23 +489,27 @@ export function TendersGantt() {
                       className={`absolute top-2 h-7 cursor-pointer rounded-md px-2 py-1 text-[10px] font-medium text-white shadow-sm ${barColor}`}
                       style={{ left, width }}
                       title={`${it.client}\n${it.status}\n${it.start.toLocaleDateString()} - ${it.end.toLocaleDateString()}\n${formatRub(it.budget)}`}
-                      onClick={() => openTenderCard(it.id)}
+                      onClick={() => handleTenderOpen(it.id)}
                     >
                       <span className="truncate">{it.status}</span>
                     </div>
                     <div
                       className={`absolute top-2 h-7 cursor-pointer rounded-md px-2 py-1 text-[10px] font-medium text-slate-100 shadow-sm ${futureBarColor}`}
                       style={{ left: futureLeft, width: futureWidth }}
-                      onClick={() => openTenderCard(it.id)}
-                      onMouseEnter={(e) =>
+                      onClick={() => handleTenderOpen(it.id)}
+                      onMouseEnter={(e) => {
+                        if (isRightDragRef.current) return;
                         setFutureTooltip({
                           item: it,
                           x: e.clientX,
                           y: e.clientY,
-                        })
-                      }
+                        });
+                      }}
                       onMouseMove={(e) =>
                         setFutureTooltip((prev) =>
+                          isRightDragRef.current
+                            ? null
+                            :
                           prev
                             ? { ...prev, x: e.clientX, y: e.clientY, item: it }
                             : { item: it, x: e.clientX, y: e.clientY },
