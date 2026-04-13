@@ -22,7 +22,27 @@ type GanttItem = {
 
 const ROW_HEIGHT = 44;
 const ROW_OVERSCAN = 12;
-const PAGE_SIZE = 1200;
+const PAGE_SIZE = 50;
+const DIAGRAM_COLUMNS = [
+  "id",
+  "id_pf",
+  "client",
+  "project",
+  "agency",
+  "manager",
+  "tender_status",
+  "tender_budget",
+  "tender_start",
+  "tender_end",
+  "tender_dl",
+] as const;
+
+function toIsoDateOnly(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
 
 const SCALE_DAY_MS: Record<Scale, number> = {
   day: 24 * 60 * 60 * 1000,
@@ -98,10 +118,16 @@ function toItem(row: DataRow, idx: number): GanttItem | null {
 
 export function TendersGantt() {
   const router = useRouter();
-  const [items, setItems] = useState<GanttItem[]>([]);
+  const [forwardItems, setForwardItems] = useState<GanttItem[]>([]);
+  const [backwardItems, setBackwardItems] = useState<GanttItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [backgroundLoading, setBackgroundLoading] = useState(false);
+  const [loadingDirection, setLoadingDirection] = useState<"up" | "down" | null>(
+    null,
+  );
+  const [hasMoreForward, setHasMoreForward] = useState(true);
+  const [hasMoreBackward, setHasMoreBackward] = useState(true);
   const [scale, setScale] = useState<Scale>("week");
   const [futureTooltip, setFutureTooltip] = useState<{
     item: GanttItem;
@@ -112,10 +138,48 @@ export function TendersGantt() {
   const didInitialTodayScrollRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollRafRef = useRef<number | null>(null);
+  const nextForwardOffsetRef = useRef(0);
+  const nextBackwardOffsetRef = useRef(0);
+  const loadingMoreForwardRef = useRef(false);
+  const loadingMoreBackwardRef = useRef(false);
 
   const openTenderCard = (id: string) => {
     if (!id) return;
     router.push(`/tenders/${encodeURIComponent(id)}`);
+  };
+
+  const requestPage = async (
+    offset: number,
+    limit: number,
+    signal?: AbortSignal,
+    direction: "forward" | "backward" | "all" = "all",
+  ) => {
+    const today = toIsoDateOnly(new Date());
+    const filters =
+      direction === "forward"
+        ? [{ field: "tender_start", operator: "gte", value: today }]
+        : direction === "backward"
+          ? [{ field: "tender_start", operator: "lt", value: today }]
+          : [];
+    const sortDirection =
+      direction === "backward" ? "desc" : "asc";
+    const res = await fetch("/api/data", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        rowsOnly: true,
+        tableRequest: {
+          table: "tenders",
+          sort: { field: "tender_start", direction: sortDirection },
+          columns: DIAGRAM_COLUMNS,
+          filters,
+          limit,
+          offset,
+        },
+      }),
+      signal,
+    });
+    return res.json();
   };
 
   const parseRowsToItems = (rows: DataRow[], baseIndex = 0): GanttItem[] =>
@@ -127,91 +191,47 @@ export function TendersGantt() {
     let cancelled = false;
     const controller = new AbortController();
 
-    const requestBodyBase = {
-      rowsOnly: true,
-      tableRequest: {
-        table: "tenders",
-        sort: { field: "tender_start", direction: "asc" as const },
-        columns: [
-          "id",
-          "id_pf",
-          "client",
-          "project",
-          "agency",
-          "manager",
-          "tender_status",
-          "tender_budget",
-          "tender_start",
-          "tender_end",
-          "tender_dl",
-        ],
-      },
-    };
-
-    const fetchRowsPage = async (offset: number, limit: number) => {
-      const body = {
-        ...requestBodyBase,
-        tableRequest: { ...requestBodyBase.tableRequest, limit, offset },
-      };
-      const res = await fetch("/api/data", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
-      return res.json();
-    };
-
     setLoading(true);
-    fetchRowsPage(0, PAGE_SIZE)
-      .then((initialData) => {
+    Promise.all([
+      requestPage(0, PAGE_SIZE, controller.signal, "backward"),
+      requestPage(0, PAGE_SIZE, controller.signal, "forward"),
+    ])
+      .then(([backwardData, forwardData]) => {
         if (cancelled) return;
-        if (initialData.error) {
-          setError(initialData.error);
-          setItems([]);
+        if (backwardData.error && forwardData.error) {
+          setError(backwardData.error || forwardData.error);
+          setForwardItems([]);
+          setBackwardItems([]);
           setLoading(false);
           return;
         }
 
-        const initialRows = initialData.rows ?? [];
+        const backwardRows = (backwardData.rows ?? []) as DataRow[];
+        const forwardRows = (forwardData.rows ?? []) as DataRow[];
+        const parsedBackward = parseRowsToItems(
+          backwardRows,
+          1_000_000,
+        ).sort((a, b) => a.start.getTime() - b.start.getTime());
+        const parsedForward = parseRowsToItems(forwardRows, 0);
+
         setError(null);
-        setItems(parseRowsToItems(initialRows, 0));
+        setBackwardItems(parsedBackward);
+        setForwardItems(parsedForward);
         setLoading(false);
 
-        if (initialRows.length < PAGE_SIZE) return;
-
-        setBackgroundLoading(true);
-        let offset = PAGE_SIZE;
-        const loadRest = async () => {
-          while (!cancelled) {
-            const pageData = await fetchRowsPage(offset, PAGE_SIZE);
-            if (cancelled) return;
-            if (pageData.error) return;
-            const pageRows = (pageData.rows ?? []) as DataRow[];
-            if (pageRows.length === 0) return;
-
-            const parsedPage = parseRowsToItems(pageRows, offset);
-            if (parsedPage.length > 0) {
-              setItems((prev) => [...prev, ...parsedPage]);
-            }
-            if (pageRows.length < PAGE_SIZE) return;
-            offset += PAGE_SIZE;
-          }
-        };
-
-        loadRest()
-          .catch(() => {
-            // Фоновая догрузка не должна ломать страницу.
-          })
-          .finally(() => {
-            if (!cancelled) setBackgroundLoading(false);
-          });
+        nextBackwardOffsetRef.current = backwardRows.length;
+        nextForwardOffsetRef.current = forwardRows.length;
+        setHasMoreBackward(backwardRows.length === PAGE_SIZE);
+        setHasMoreForward(forwardRows.length === PAGE_SIZE);
       })
       .catch(() => {
         if (!cancelled) {
           setError("Не удалось загрузить данные для диаграммы");
-          setItems([]);
+          setForwardItems([]);
+          setBackwardItems([]);
           setLoading(false);
+          setHasMoreForward(false);
+          setHasMoreBackward(false);
         }
       });
 
@@ -221,6 +241,63 @@ export function TendersGantt() {
     };
   }, []);
 
+  const loadMoreForward = async () => {
+    if (loading || !hasMoreForward || loadingMoreForwardRef.current) return;
+    loadingMoreForwardRef.current = true;
+    setBackgroundLoading(true);
+    setLoadingDirection("down");
+    const offset = nextForwardOffsetRef.current;
+    try {
+      const data = await requestPage(offset, PAGE_SIZE, undefined, "forward");
+      if (data.error) return;
+      const pageRows = (data.rows ?? []) as DataRow[];
+      if (pageRows.length === 0) {
+        setHasMoreForward(false);
+        return;
+      }
+      const parsedPage = parseRowsToItems(pageRows, offset);
+      if (parsedPage.length > 0) {
+        setForwardItems((prev) => [...prev, ...parsedPage]);
+      }
+      nextForwardOffsetRef.current = offset + pageRows.length;
+      setHasMoreForward(pageRows.length === PAGE_SIZE);
+    } finally {
+      loadingMoreForwardRef.current = false;
+      setBackgroundLoading(false);
+      setLoadingDirection((d) => (d === "down" ? null : d));
+    }
+  };
+
+  const loadMoreBackward = async () => {
+    if (loading || !hasMoreBackward || loadingMoreBackwardRef.current) return;
+    loadingMoreBackwardRef.current = true;
+    setBackgroundLoading(true);
+    setLoadingDirection("up");
+    const offset = nextBackwardOffsetRef.current;
+    try {
+      const data = await requestPage(offset, PAGE_SIZE, undefined, "backward");
+      if (data.error) return;
+      const pageRows = (data.rows ?? []) as DataRow[];
+      if (pageRows.length === 0) {
+        setHasMoreBackward(false);
+        return;
+      }
+      const parsedPage = parseRowsToItems(
+        pageRows,
+        1_000_000 + offset,
+      ).sort((a, b) => a.start.getTime() - b.start.getTime());
+      if (parsedPage.length > 0) {
+        setBackwardItems((prev) => [...parsedPage, ...prev]);
+      }
+      nextBackwardOffsetRef.current = offset + pageRows.length;
+      setHasMoreBackward(pageRows.length === PAGE_SIZE);
+    } finally {
+      loadingMoreBackwardRef.current = false;
+      setBackgroundLoading(false);
+      setLoadingDirection((d) => (d === "up" ? null : d));
+    }
+  };
+
   useEffect(() => {
     const container = scrollRef.current;
     if (!container) return;
@@ -229,6 +306,11 @@ export function TendersGantt() {
       height: container.clientHeight,
     });
   }, [loading]);
+
+  const items = useMemo(
+    () => [...backwardItems, ...forwardItems],
+    [backwardItems, forwardItems],
+  );
 
   const timeline = useMemo(() => {
     if (!items.length) return null;
@@ -392,9 +474,16 @@ export function TendersGantt() {
           <div className="ml-auto flex items-center gap-2 text-xs">
             {backgroundLoading && (
               <span className="mr-2 text-amber-600 dark:text-amber-400">
-                Догружаем все записи...
+                {loadingDirection === "up"
+                  ? "Догружаем вверх..."
+                  : loadingDirection === "down"
+                    ? "Догружаем вниз..."
+                    : "Догружаем..."}
               </span>
             )}
+            <span className="text-slate-500 dark:text-slate-400">
+              Загружено: {items.length}
+            </span>
             <span className="text-slate-500 dark:text-slate-400">Масштаб:</span>
             {(["day", "week", "month"] as const).map((s) => (
               <button
@@ -433,6 +522,11 @@ export function TendersGantt() {
               top: el.scrollTop,
               height: el.clientHeight,
             });
+            const nearTop = el.scrollTop <= ROW_HEIGHT * 8;
+            const nearBottom =
+              el.scrollTop + el.clientHeight >= el.scrollHeight - ROW_HEIGHT * 8;
+            if (nearTop) void loadMoreBackward();
+            if (nearBottom) void loadMoreForward();
           });
         }}
       >
