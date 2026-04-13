@@ -20,6 +20,9 @@ type GanttItem = {
   futureEnd: Date;
 };
 
+const ROW_HEIGHT = 44;
+const ROW_OVERSCAN = 12;
+
 const SCALE_DAY_MS: Record<Scale, number> = {
   day: 24 * 60 * 60 * 1000,
   week: 7 * 24 * 60 * 60 * 1000,
@@ -104,11 +107,20 @@ export function TendersGantt() {
     y: number;
   } | null>(null);
   const [isRightDragging, setIsRightDragging] = useState(false);
+  const [viewport, setViewport] = useState({ top: 0, height: 800 });
   const didInitialTodayScrollRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const isRightDragRef = useRef(false);
   const suppressClickRef = useRef(false);
+  const panRafRef = useRef<number | null>(null);
+  const panTargetRef = useRef({ left: 0, top: 0 });
+  const scrollRafRef = useRef<number | null>(null);
+  const tooltipRafRef = useRef<number | null>(null);
+  const tooltipPendingRef = useRef<{
+    item: GanttItem;
+    x: number;
+    y: number;
+  } | null>(null);
   const dragStartRef = useRef({
     x: 0,
     y: 0,
@@ -128,7 +140,24 @@ export function TendersGantt() {
     fetch("/api/data", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tableRequest: { table: "tenders" } }),
+      body: JSON.stringify({
+        tableRequest: {
+          table: "tenders",
+          columns: [
+            "id",
+            "id_pf",
+            "client",
+            "project",
+            "agency",
+            "manager",
+            "tender_status",
+            "tender_budget",
+            "tender_start",
+            "tender_end",
+            "tender_dl",
+          ],
+        },
+      }),
     })
       .then((res) => res.json())
       .then((data) => {
@@ -153,6 +182,28 @@ export function TendersGantt() {
 
     return () => {
       cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const container = scrollRef.current;
+    if (!container) return;
+    setViewport({
+      top: container.scrollTop,
+      height: container.clientHeight,
+    });
+  }, [loading]);
+
+  useEffect(() => {
+    return () => {
+      if (tooltipRafRef.current != null) {
+        window.cancelAnimationFrame(tooltipRafRef.current);
+        tooltipRafRef.current = null;
+      }
+      if (scrollRafRef.current != null) {
+        window.cancelAnimationFrame(scrollRafRef.current);
+        scrollRafRef.current = null;
+      }
     };
   }, []);
 
@@ -203,37 +254,36 @@ export function TendersGantt() {
 
     // По вертикали фокусируемся на ближайшей будущей дате старта
     // (futureStart = start + 1 год). Если вдруг все даты в прошлом — fallback на ближайшую.
-    let nearest = items[0];
     let minFutureDist = Number.POSITIVE_INFINITY;
-    for (const it of items) {
+    let nearestIndex = 0;
+    for (let i = 0; i < items.length; i += 1) {
+      const it = items[i];
       const futureStartTs = it.futureStart.getTime();
       if (futureStartTs >= todayTs) {
         const dist = futureStartTs - todayTs;
         if (dist < minFutureDist) {
           minFutureDist = dist;
-          nearest = it;
+          nearestIndex = i;
         }
       }
     }
 
     if (!Number.isFinite(minFutureDist)) {
       let minAbsDist = Number.POSITIVE_INFINITY;
-      for (const it of items) {
+      for (let i = 0; i < items.length; i += 1) {
+        const it = items[i];
         const dist = Math.abs(it.futureStart.getTime() - todayTs);
         if (dist < minAbsDist) {
           minAbsDist = dist;
-          nearest = it;
+          nearestIndex = i;
         }
       }
     }
 
-    const rowEl = rowRefs.current[nearest.id];
-    const targetTop = rowEl
-      ? Math.max(
-          0,
-          rowEl.offsetTop - container.clientHeight / 2 + rowEl.clientHeight / 2,
-        )
-      : container.scrollTop;
+    const targetTop = Math.max(
+      0,
+      nearestIndex * ROW_HEIGHT - container.clientHeight / 2 + ROW_HEIGHT / 2,
+    );
 
     // Важно прокручивать и по X, и по Y одним вызовом:
     // иначе второй scrollTo может отменить первый в некоторых браузерах.
@@ -279,15 +329,22 @@ export function TendersGantt() {
   useEffect(() => {
     const onMouseMove = (e: MouseEvent) => {
       if (!isRightDragRef.current || !scrollRef.current) return;
-      const container = scrollRef.current;
       const dx = e.clientX - dragStartRef.current.x;
       const dy = e.clientY - dragStartRef.current.y;
       dragStartRef.current.moved = Math.max(
         dragStartRef.current.moved,
         Math.abs(dx) + Math.abs(dy),
       );
-      container.scrollLeft = dragStartRef.current.left - dx;
-      container.scrollTop = dragStartRef.current.top - dy;
+      panTargetRef.current.left = dragStartRef.current.left - dx;
+      panTargetRef.current.top = dragStartRef.current.top - dy;
+      if (panRafRef.current == null) {
+        panRafRef.current = window.requestAnimationFrame(() => {
+          panRafRef.current = null;
+          if (!scrollRef.current) return;
+          scrollRef.current.scrollLeft = panTargetRef.current.left;
+          scrollRef.current.scrollTop = panTargetRef.current.top;
+        });
+      }
       e.preventDefault();
     };
 
@@ -297,6 +354,10 @@ export function TendersGantt() {
       setIsRightDragging(false);
       suppressClickRef.current = dragStartRef.current.moved > 6;
       document.body.classList.remove("select-none");
+      if (panRafRef.current != null) {
+        window.cancelAnimationFrame(panRafRef.current);
+        panRafRef.current = null;
+      }
     };
 
     window.addEventListener("mousemove", onMouseMove);
@@ -308,6 +369,10 @@ export function TendersGantt() {
       window.removeEventListener("mouseup", stop);
       window.removeEventListener("blur", stop);
       document.body.classList.remove("select-none");
+      if (panRafRef.current != null) {
+        window.cancelAnimationFrame(panRafRef.current);
+        panRafRef.current = null;
+      }
     };
   }, []);
 
@@ -321,7 +386,38 @@ export function TendersGantt() {
 
   const handleTenderOpen = (id: string) => {
     if (suppressClickRef.current) return;
+    router.prefetch(`/tenders/${encodeURIComponent(id)}`);
     openTenderCard(id);
+  };
+
+  const scheduleFutureTooltip = (item: GanttItem, x: number, y: number) => {
+    tooltipPendingRef.current = { item, x, y };
+    if (tooltipRafRef.current != null) return;
+    tooltipRafRef.current = window.requestAnimationFrame(() => {
+      tooltipRafRef.current = null;
+      const next = tooltipPendingRef.current;
+      if (!next) return;
+      setFutureTooltip((prev) => {
+        if (
+          prev &&
+          prev.item.id === next.item.id &&
+          prev.x === next.x &&
+          prev.y === next.y
+        ) {
+          return prev;
+        }
+        return next;
+      });
+    });
+  };
+
+  const clearFutureTooltip = () => {
+    tooltipPendingRef.current = null;
+    if (tooltipRafRef.current != null) {
+      window.cancelAnimationFrame(tooltipRafRef.current);
+      tooltipRafRef.current = null;
+    }
+    setFutureTooltip(null);
   };
 
   if (loading) {
@@ -369,6 +465,16 @@ export function TendersGantt() {
     return { ts, label };
   }).filter((_, i) => (scale === "day" ? true : scale === "week" ? i % 7 === 0 : i % 30 === 0));
 
+  const visibleStart = Math.max(
+    0,
+    Math.floor(viewport.top / ROW_HEIGHT) - ROW_OVERSCAN,
+  );
+  const visibleEnd = Math.min(
+    items.length,
+    Math.ceil((viewport.top + viewport.height) / ROW_HEIGHT) + ROW_OVERSCAN,
+  );
+  const visibleItems = items.slice(visibleStart, visibleEnd);
+
   return (
     <div className="flex flex-1 flex-col overflow-hidden px-4 py-4 lg:px-6 lg:py-5">
       <div className="mb-4 rounded-xl border border-slate-200 bg-white/90 p-3 shadow-sm dark:border-slate-700 dark:bg-slate-900/80">
@@ -406,10 +512,19 @@ export function TendersGantt() {
       <div
         ref={scrollRef}
         className={`relative flex-1 overflow-auto rounded-xl border border-slate-200 bg-white/90 dark:border-slate-700 dark:bg-slate-900/80 ${
-          isRightDragging ? "cursor-grabbing select-none" : "cursor-default select-none"
+          isRightDragging ? "cursor-grabbing select-none" : "cursor-grab select-none"
         }`}
         onContextMenu={(e) => e.preventDefault()}
         onMouseDown={startRightDrag}
+        onDragStart={(e) => e.preventDefault()}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          if (scrollRafRef.current != null) return;
+          scrollRafRef.current = window.requestAnimationFrame(() => {
+            scrollRafRef.current = null;
+            setViewport({ top: el.scrollTop, height: el.clientHeight });
+          });
+        }}
       >
         <div style={{ width: leftColWidth + chartWidth }} className="min-h-full">
           <div className="sticky top-0 z-20 border-b border-slate-200 bg-slate-100/95 dark:border-slate-700 dark:bg-slate-900/95">
@@ -434,7 +549,7 @@ export function TendersGantt() {
             </div>
           </div>
 
-          <div className="relative">
+          <div className="relative" style={{ height: items.length * ROW_HEIGHT }}>
             {todayLeft >= 0 && todayLeft <= chartWidth && (
               <div
                 className="pointer-events-none absolute top-0 z-10 h-full w-[2px] bg-red-500"
@@ -442,7 +557,8 @@ export function TendersGantt() {
               />
             )}
 
-            {items.map((it) => {
+            {visibleItems.map((it, visibleIdx) => {
+              const idx = visibleStart + visibleIdx;
               const startDays = (it.start.getTime() - timeline.viewportStart) / SCALE_DAY_MS.day;
               const endDays = (it.end.getTime() - timeline.viewportStart) / SCALE_DAY_MS.day;
               const left = Math.max(0, startDays * pxPerDay);
@@ -465,11 +581,9 @@ export function TendersGantt() {
 
               return (
                 <div
-                  ref={(el) => {
-                    rowRefs.current[it.id] = el;
-                  }}
                   key={it.id}
-                  className="grid grid-cols-[300px_1fr] border-b border-slate-100 dark:border-slate-800"
+                  className="absolute left-0 right-0 grid grid-cols-[300px_1fr] border-b border-slate-100 dark:border-slate-800"
+                  style={{ top: idx * ROW_HEIGHT, height: ROW_HEIGHT }}
                 >
                   <div className="sticky left-0 z-10 truncate border-r border-slate-200 bg-white/95 px-3 py-2 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-900/95 dark:text-slate-200">
                     <button
@@ -499,23 +613,13 @@ export function TendersGantt() {
                       onClick={() => handleTenderOpen(it.id)}
                       onMouseEnter={(e) => {
                         if (isRightDragRef.current) return;
-                        setFutureTooltip({
-                          item: it,
-                          x: e.clientX,
-                          y: e.clientY,
-                        });
+                        scheduleFutureTooltip(it, e.clientX, e.clientY);
                       }}
-                      onMouseMove={(e) =>
-                        setFutureTooltip((prev) =>
-                          isRightDragRef.current
-                            ? null
-                            :
-                          prev
-                            ? { ...prev, x: e.clientX, y: e.clientY, item: it }
-                            : { item: it, x: e.clientX, y: e.clientY },
-                        )
-                      }
-                      onMouseLeave={() => setFutureTooltip(null)}
+                      onMouseMove={(e) => {
+                        if (isRightDragRef.current) return;
+                        scheduleFutureTooltip(it, e.clientX, e.clientY);
+                      }}
+                      onMouseLeave={clearFutureTooltip}
                     >
                       <span className="truncate opacity-80">Будущий</span>
                     </div>

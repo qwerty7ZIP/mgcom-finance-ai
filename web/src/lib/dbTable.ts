@@ -23,6 +23,7 @@ export type TableRequestLike = {
   filters?: TableFilter[];
   sort?: TableSort | null;
   limit?: number;
+  columns?: string[];
 };
 
 const DEFAULT_LIMIT = 15000;
@@ -157,7 +158,15 @@ export async function getDbTableByRequest(
       ? Math.min(request.limit, DEFAULT_LIMIT)
       : DEFAULT_LIMIT;
 
-  let query = supabaseServer.from(safeTable).select("*");
+  const requestedColumns = Array.isArray(request.columns)
+    ? request.columns
+        .map((c) => normalizeStringValue(c))
+        .filter(Boolean)
+    : [];
+  const selectClause =
+    requestedColumns.length > 0 ? requestedColumns.join(",") : "*";
+
+  let query = supabaseServer.from(safeTable).select(selectClause);
 
   // Применяем фильтры на стороне Supabase (в т.ч. ilike)
   const filters = Array.isArray(request.filters) ? request.filters : [];
