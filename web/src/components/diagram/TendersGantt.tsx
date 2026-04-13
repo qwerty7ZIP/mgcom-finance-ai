@@ -13,7 +13,6 @@ type GanttItem = {
   agency: string;
   manager: string;
   status: string;
-  budget: number;
   start: Date;
   end: Date;
   futureStart: Date;
@@ -21,28 +20,7 @@ type GanttItem = {
 };
 
 const ROW_HEIGHT = 44;
-const ROW_OVERSCAN = 12;
-const PAGE_SIZE = 50;
-const DIAGRAM_COLUMNS = [
-  "id",
-  "id_pf",
-  "client",
-  "project",
-  "agency",
-  "manager",
-  "tender_status",
-  "tender_budget",
-  "tender_start",
-  "tender_end",
-  "tender_dl",
-] as const;
-
-function toIsoDateOnly(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
+const ROW_OVERSCAN = 6;
 
 const SCALE_DAY_MS: Record<Scale, number> = {
   day: 24 * 60 * 60 * 1000,
@@ -83,13 +61,6 @@ function getStr(row: DataRow, key: string): string {
   return String(v).trim();
 }
 
-function getNum(row: DataRow, key: string): number {
-  const v = row[key] ?? row[key.toLowerCase()];
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  if (typeof v === "string") return parseFloat(v) || 0;
-  return 0;
-}
-
 function toItem(row: DataRow, idx: number): GanttItem | null {
   const start = parseDate(row.tender_start ?? row.Tender_start);
   const endRaw = parseDate(row.tender_end ?? row.tender_dl ?? row.Tender_end);
@@ -108,7 +79,6 @@ function toItem(row: DataRow, idx: number): GanttItem | null {
     agency: getStr(row, "agency") || "—",
     manager: getStr(row, "manager") || "—",
     status: getStr(row, "tender_status") || "Без статуса",
-    budget: getNum(row, "tender_budget"),
     start,
     end,
     futureStart,
@@ -118,16 +88,9 @@ function toItem(row: DataRow, idx: number): GanttItem | null {
 
 export function TendersGantt() {
   const router = useRouter();
-  const [forwardItems, setForwardItems] = useState<GanttItem[]>([]);
-  const [backwardItems, setBackwardItems] = useState<GanttItem[]>([]);
+  const [items, setItems] = useState<GanttItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [backgroundLoading, setBackgroundLoading] = useState(false);
-  const [loadingDirection, setLoadingDirection] = useState<"up" | "down" | null>(
-    null,
-  );
-  const [hasMoreForward, setHasMoreForward] = useState(true);
-  const [hasMoreBackward, setHasMoreBackward] = useState(true);
   const [scale, setScale] = useState<Scale>("week");
   const [futureTooltip, setFutureTooltip] = useState<{
     item: GanttItem;
@@ -138,48 +101,10 @@ export function TendersGantt() {
   const didInitialTodayScrollRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollRafRef = useRef<number | null>(null);
-  const nextForwardOffsetRef = useRef(0);
-  const nextBackwardOffsetRef = useRef(0);
-  const loadingMoreForwardRef = useRef(false);
-  const loadingMoreBackwardRef = useRef(false);
 
   const openTenderCard = (id: string) => {
     if (!id) return;
     router.push(`/tenders/${encodeURIComponent(id)}`);
-  };
-
-  const requestPage = async (
-    offset: number,
-    limit: number,
-    signal?: AbortSignal,
-    direction: "forward" | "backward" | "all" = "all",
-  ) => {
-    const today = toIsoDateOnly(new Date());
-    const filters =
-      direction === "forward"
-        ? [{ field: "tender_start", operator: "gte", value: today }]
-        : direction === "backward"
-          ? [{ field: "tender_start", operator: "lt", value: today }]
-          : [];
-    const sortDirection =
-      direction === "backward" ? "desc" : "asc";
-    const res = await fetch("/api/data", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        rowsOnly: true,
-        tableRequest: {
-          table: "tenders",
-          sort: { field: "tender_start", direction: sortDirection },
-          columns: DIAGRAM_COLUMNS,
-          filters,
-          limit,
-          offset,
-        },
-      }),
-      signal,
-    });
-    return res.json();
   };
 
   const parseRowsToItems = (rows: DataRow[], baseIndex = 0): GanttItem[] =>
@@ -191,47 +116,57 @@ export function TendersGantt() {
     let cancelled = false;
     const controller = new AbortController();
 
+    const requestBodyBase = {
+      rowsOnly: true,
+      tableRequest: {
+        table: "tenders",
+        sort: { field: "tender_start", direction: "asc" as const },
+        columns: [
+          "id",
+          "id_pf",
+          "client",
+          "project",
+          "agency",
+          "manager",
+          "tender_status",
+          "tender_start",
+          "tender_end",
+          "tender_dl",
+        ],
+      },
+    };
+
+    const fetchAllRows = async () => {
+      const res = await fetch("/api/data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestBodyBase),
+        signal: controller.signal,
+      });
+      return res.json();
+    };
+
     setLoading(true);
-    Promise.all([
-      requestPage(0, PAGE_SIZE, controller.signal, "backward"),
-      requestPage(0, PAGE_SIZE, controller.signal, "forward"),
-    ])
-      .then(([backwardData, forwardData]) => {
+    fetchAllRows()
+      .then((data) => {
         if (cancelled) return;
-        if (backwardData.error && forwardData.error) {
-          setError(backwardData.error || forwardData.error);
-          setForwardItems([]);
-          setBackwardItems([]);
+        if (data.error) {
+          setError(data.error);
+          setItems([]);
           setLoading(false);
           return;
         }
 
-        const backwardRows = (backwardData.rows ?? []) as DataRow[];
-        const forwardRows = (forwardData.rows ?? []) as DataRow[];
-        const parsedBackward = parseRowsToItems(
-          backwardRows,
-          1_000_000,
-        ).sort((a, b) => a.start.getTime() - b.start.getTime());
-        const parsedForward = parseRowsToItems(forwardRows, 0);
-
+        const allRows = data.rows ?? [];
         setError(null);
-        setBackwardItems(parsedBackward);
-        setForwardItems(parsedForward);
+        setItems(parseRowsToItems(allRows, 0));
         setLoading(false);
-
-        nextBackwardOffsetRef.current = backwardRows.length;
-        nextForwardOffsetRef.current = forwardRows.length;
-        setHasMoreBackward(backwardRows.length === PAGE_SIZE);
-        setHasMoreForward(forwardRows.length === PAGE_SIZE);
       })
       .catch(() => {
         if (!cancelled) {
           setError("Не удалось загрузить данные для диаграммы");
-          setForwardItems([]);
-          setBackwardItems([]);
+          setItems([]);
           setLoading(false);
-          setHasMoreForward(false);
-          setHasMoreBackward(false);
         }
       });
 
@@ -241,63 +176,6 @@ export function TendersGantt() {
     };
   }, []);
 
-  const loadMoreForward = async () => {
-    if (loading || !hasMoreForward || loadingMoreForwardRef.current) return;
-    loadingMoreForwardRef.current = true;
-    setBackgroundLoading(true);
-    setLoadingDirection("down");
-    const offset = nextForwardOffsetRef.current;
-    try {
-      const data = await requestPage(offset, PAGE_SIZE, undefined, "forward");
-      if (data.error) return;
-      const pageRows = (data.rows ?? []) as DataRow[];
-      if (pageRows.length === 0) {
-        setHasMoreForward(false);
-        return;
-      }
-      const parsedPage = parseRowsToItems(pageRows, offset);
-      if (parsedPage.length > 0) {
-        setForwardItems((prev) => [...prev, ...parsedPage]);
-      }
-      nextForwardOffsetRef.current = offset + pageRows.length;
-      setHasMoreForward(pageRows.length === PAGE_SIZE);
-    } finally {
-      loadingMoreForwardRef.current = false;
-      setBackgroundLoading(false);
-      setLoadingDirection((d) => (d === "down" ? null : d));
-    }
-  };
-
-  const loadMoreBackward = async () => {
-    if (loading || !hasMoreBackward || loadingMoreBackwardRef.current) return;
-    loadingMoreBackwardRef.current = true;
-    setBackgroundLoading(true);
-    setLoadingDirection("up");
-    const offset = nextBackwardOffsetRef.current;
-    try {
-      const data = await requestPage(offset, PAGE_SIZE, undefined, "backward");
-      if (data.error) return;
-      const pageRows = (data.rows ?? []) as DataRow[];
-      if (pageRows.length === 0) {
-        setHasMoreBackward(false);
-        return;
-      }
-      const parsedPage = parseRowsToItems(
-        pageRows,
-        1_000_000 + offset,
-      ).sort((a, b) => a.start.getTime() - b.start.getTime());
-      if (parsedPage.length > 0) {
-        setBackwardItems((prev) => [...parsedPage, ...prev]);
-      }
-      nextBackwardOffsetRef.current = offset + pageRows.length;
-      setHasMoreBackward(pageRows.length === PAGE_SIZE);
-    } finally {
-      loadingMoreBackwardRef.current = false;
-      setBackgroundLoading(false);
-      setLoadingDirection((d) => (d === "up" ? null : d));
-    }
-  };
-
   useEffect(() => {
     const container = scrollRef.current;
     if (!container) return;
@@ -306,11 +184,6 @@ export function TendersGantt() {
       height: container.clientHeight,
     });
   }, [loading]);
-
-  const items = useMemo(
-    () => [...backwardItems, ...forwardItems],
-    [backwardItems, forwardItems],
-  );
 
   const timeline = useMemo(() => {
     if (!items.length) return null;
@@ -326,13 +199,6 @@ export function TendersGantt() {
       viewportEnd: maxEnd,
     };
   }, [items, scale]);
-
-  const formatRub = (n: number) =>
-    n >= 1_000_000
-      ? `${(n / 1_000_000).toFixed(1)} млн ₽`
-      : n >= 1_000
-        ? `${(n / 1_000).toFixed(1)} тыс ₽`
-        : `${Math.round(n)} ₽`;
 
   const pxPerDay = scale === "day" ? 36 : scale === "week" ? 14 : 6;
   const todayTs = Date.now();
@@ -472,18 +338,6 @@ export function TendersGantt() {
             Диаграмма тендеров (Гант)
           </h1>
           <div className="ml-auto flex items-center gap-2 text-xs">
-            {backgroundLoading && (
-              <span className="mr-2 text-amber-600 dark:text-amber-400">
-                {loadingDirection === "up"
-                  ? "Догружаем вверх..."
-                  : loadingDirection === "down"
-                    ? "Догружаем вниз..."
-                    : "Догружаем..."}
-              </span>
-            )}
-            <span className="text-slate-500 dark:text-slate-400">
-              Загружено: {items.length}
-            </span>
             <span className="text-slate-500 dark:text-slate-400">Масштаб:</span>
             {(["day", "week", "month"] as const).map((s) => (
               <button
@@ -522,11 +376,6 @@ export function TendersGantt() {
               top: el.scrollTop,
               height: el.clientHeight,
             });
-            const nearTop = el.scrollTop <= ROW_HEIGHT * 8;
-            const nearBottom =
-              el.scrollTop + el.clientHeight >= el.scrollHeight - ROW_HEIGHT * 8;
-            if (nearTop) void loadMoreBackward();
-            if (nearBottom) void loadMoreForward();
           });
         }}
       >
@@ -606,7 +455,7 @@ export function TendersGantt() {
                     <div
                       className={`absolute top-2 h-7 cursor-pointer rounded-md px-2 py-1 text-[10px] font-medium text-white shadow-sm ${barColor}`}
                       style={{ left, width }}
-                      title={`${it.client}\n${it.status}\n${it.start.toLocaleDateString()} - ${it.end.toLocaleDateString()}\n${formatRub(it.budget)}`}
+                      title={`${it.client}\n${it.status}\n${it.start.toLocaleDateString()} - ${it.end.toLocaleDateString()}`}
                       onClick={() => openTenderCard(it.id)}
                     >
                       <span className="truncate">{it.status}</span>
@@ -664,9 +513,6 @@ export function TendersGantt() {
               {futureTooltip.item.futureStart.toLocaleDateString()} -{" "}
               {futureTooltip.item.futureEnd.toLocaleDateString()}
             </span>
-          </p>
-          <p className="text-slate-300">
-            Бюджет: <span className="text-emerald-300">{formatRub(futureTooltip.item.budget)}</span>
           </p>
         </div>
       )}
