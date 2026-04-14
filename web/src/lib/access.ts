@@ -4,6 +4,7 @@ export type SectionAccess = {
   tables: boolean;
   analytics: boolean;
   diagram: boolean;
+  branches: boolean;
 };
 
 export type AccessState = {
@@ -15,6 +16,7 @@ const DEFAULT_SECTIONS: SectionAccess = {
   tables: true,
   analytics: true,
   diagram: true,
+  branches: true,
 };
 
 function coerceBool(v: unknown, fallback = false): boolean {
@@ -37,13 +39,14 @@ export function resolveAccessFromMetadata(
         tables: coerceBool(rawAccess.tables, false),
         analytics: coerceBool(rawAccess.analytics, false),
         diagram: coerceBool(rawAccess.diagram, false),
+        branches: coerceBool(rawAccess.branches, false),
       }
     : DEFAULT_SECTIONS;
 
   if (isAdmin) {
     return {
       isAdmin: true,
-      sections: { tables: true, analytics: true, diagram: true },
+      sections: { tables: true, analytics: true, diagram: true, branches: true },
     };
   }
 
@@ -54,7 +57,7 @@ export function resolveAccessFromUser(user: User | null): AccessState {
   if (!user) {
     return {
       isAdmin: false,
-      sections: { tables: false, analytics: false, diagram: false },
+      sections: { tables: false, analytics: false, diagram: false, branches: false },
     };
   }
   return resolveAccessFromMetadata(
@@ -66,7 +69,8 @@ export function hasAnySectionAccess(access: AccessState): boolean {
   return (
     access.sections.tables ||
     access.sections.analytics ||
-    access.sections.diagram
+    access.sections.diagram ||
+    access.sections.branches
   );
 }
 
@@ -76,6 +80,7 @@ export function canAccessPath(pathname: string, access: AccessState): boolean {
   if (pathname.startsWith("/admin")) return access.isAdmin;
   if (pathname.startsWith("/analytics")) return access.sections.analytics;
   if (pathname.startsWith("/diagram")) return access.sections.diagram;
+  if (pathname.startsWith("/branches")) return access.sections.branches;
   if (pathname === "/") return access.sections.tables;
   return true;
 }

@@ -9,6 +9,7 @@ import { resolveAccessFromUser } from "@/lib/access";
 
 const navItems = [
   { href: "/diagram", label: "Диаграмма" },
+  { href: "/branches", label: "Ветки" },
   { href: "/", label: "Таблицы" },
   { href: "/analytics", label: "Аналитика" },
 ] as const;
@@ -16,6 +17,7 @@ const navItems = [
 export function AppHeader() {
   const pathname = usePathname();
   const [canDiagram, setCanDiagram] = useState(true);
+  const [canBranches, setCanBranches] = useState(true);
   const [canTables, setCanTables] = useState(true);
   const [canAnalytics, setCanAnalytics] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -27,6 +29,7 @@ export function AppHeader() {
       if (!mounted) return;
       const access = resolveAccessFromUser(user ?? null);
       setCanDiagram(access.sections.diagram);
+      setCanBranches(access.sections.branches);
       setCanTables(access.sections.tables);
       setCanAnalytics(access.sections.analytics);
       setIsAdmin(access.isAdmin);
@@ -38,6 +41,7 @@ export function AppHeader() {
 
   const filteredNavItems = navItems.filter((n) => {
     if (n.href === "/diagram") return canDiagram;
+    if (n.href === "/branches") return canBranches;
     if (n.href === "/") return canTables;
     if (n.href === "/analytics") return canAnalytics;
     return true;

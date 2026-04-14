@@ -7,6 +7,7 @@ type Access = {
   tables: boolean;
   analytics: boolean;
   diagram: boolean;
+  branches: boolean;
 };
 
 type AdminUser = {
@@ -17,7 +18,7 @@ type AdminUser = {
   access: Access;
 };
 
-const EMPTY_ACCESS: Access = { tables: false, analytics: false, diagram: false };
+const EMPTY_ACCESS: Access = { tables: false, analytics: false, diagram: false, branches: false };
 
 async function authHeaders(): Promise<Record<string, string>> {
   const token = (await supabaseBrowser?.auth.getSession())?.data.session?.access_token;
@@ -85,7 +86,9 @@ export function AdminPanel() {
         email: newEmail.trim(),
         password: newPassword,
         isAdmin: newIsAdmin,
-        access: newIsAdmin ? { tables: true, analytics: true, diagram: true } : newAccess,
+        access: newIsAdmin
+          ? { tables: true, analytics: true, diagram: true, branches: true }
+          : newAccess,
       }),
     });
     const data = await res.json();
@@ -111,7 +114,9 @@ export function AdminPanel() {
       body: JSON.stringify({
         id: user.id,
         isAdmin: user.isAdmin,
-        access: user.isAdmin ? { tables: true, analytics: true, diagram: true } : user.access,
+        access: user.isAdmin
+          ? { tables: true, analytics: true, diagram: true, branches: true }
+          : user.access,
       }),
     });
     const data = await res.json();
@@ -213,7 +218,7 @@ export function AdminPanel() {
         </form>
         {!newIsAdmin && (
           <div className="mt-3 flex flex-wrap gap-4 text-sm">
-            {(["diagram", "tables", "analytics"] as const).map((k) => (
+            {(["diagram", "branches", "tables", "analytics"] as const).map((k) => (
               <label key={k} className="flex items-center gap-2 text-slate-700 dark:text-slate-300">
                 <input
                   type="checkbox"
@@ -222,7 +227,13 @@ export function AdminPanel() {
                     setNewAccess((prev) => ({ ...prev, [k]: e.target.checked }))
                   }
                 />
-                {k === "diagram" ? "Диаграмма" : k === "tables" ? "Таблицы" : "Аналитика"}
+                {k === "diagram"
+                  ? "Диаграмма"
+                  : k === "branches"
+                    ? "Ветки"
+                    : k === "tables"
+                      ? "Таблицы"
+                      : "Аналитика"}
               </label>
             ))}
           </div>
@@ -275,7 +286,7 @@ export function AdminPanel() {
                 />
                 Админ
               </label>
-              {(["diagram", "tables", "analytics"] as const).map((k) => (
+              {(["diagram", "branches", "tables", "analytics"] as const).map((k) => (
                 <label key={k} className="flex items-center gap-2 text-sm">
                   <input
                     type="checkbox"
@@ -291,7 +302,13 @@ export function AdminPanel() {
                       )
                     }
                   />
-                  {k === "diagram" ? "Диаграмма" : k === "tables" ? "Таблицы" : "Аналитика"}
+                  {k === "diagram"
+                    ? "Диаграмма"
+                    : k === "branches"
+                      ? "Ветки"
+                      : k === "tables"
+                        ? "Таблицы"
+                        : "Аналитика"}
                 </label>
               ))}
               <button

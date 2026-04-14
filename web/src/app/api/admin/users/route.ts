@@ -6,6 +6,7 @@ type AccessPayload = {
   tables?: boolean;
   analytics?: boolean;
   diagram?: boolean;
+  branches?: boolean;
 };
 
 function parseBearerToken(req: NextRequest): string {
@@ -19,6 +20,7 @@ function normalizeAccess(access: AccessPayload | undefined) {
     tables: access?.tables === true,
     analytics: access?.analytics === true,
     diagram: access?.diagram === true,
+    branches: access?.branches === true,
   };
 }
 
