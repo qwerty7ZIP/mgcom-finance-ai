@@ -26,6 +26,7 @@ const MGCOM_AGENCY = "MGCom";
 const WON_STATUSES = new Set(["Выигран тендер", "Размещается"]);
 const LOST_STATUS = "Проигран тендер";
 const IN_PROGRESS_STATUS = "Размещается";
+const WON_ALTERNATIVE_STATUS = "Выиграли";
 
 const INACTIVE_STATUSES = new Set([
   "Размещается",
@@ -142,6 +143,7 @@ export function ManagersSection({ manager, dateFrom, dateTo }: Props) {
     let wonCount = 0;
     let lostCount = 0;
     let inProgressCount = 0;
+    let wonAlternativeCount = 0;
     let notOccurredCount = 0;
 
     let totalBudget = 0;
@@ -155,6 +157,7 @@ export function ManagersSection({ manager, dateFrom, dateTo }: Props) {
       if (WON_STATUSES.has(status)) wonCount += 1;
       if (status === LOST_STATUS) lostCount += 1;
       if (status === IN_PROGRESS_STATUS) inProgressCount += 1;
+      if (status === WON_ALTERNATIVE_STATUS) wonAlternativeCount += 1;
       if (NOT_OCCURRED_STATUSES.has(status)) notOccurredCount += 1;
 
       const b = getNum(r, "tender_budget");
@@ -162,13 +165,10 @@ export function ManagersSection({ manager, dateFrom, dateTo }: Props) {
       if (WON_STATUSES.has(status)) wonBudget += b;
     }
 
-    const winRateDen = wonCount + lostCount;
     const winRate =
-      wonCount + inProgressCount + lostCount > 0
+      totalCount > 0
         ? Math.round(
-            ((wonCount + inProgressCount) /
-              (wonCount + inProgressCount + lostCount)) *
-              100,
+            ((wonCount + inProgressCount + wonAlternativeCount) / totalCount) * 100,
           )
         : 0;
 
@@ -339,7 +339,9 @@ export function ManagersSection({ manager, dateFrom, dateTo }: Props) {
                 <Tooltip
                   formatter={(v, n) => [
                     formatRub(typeof v === "number" ? v : 0),
-                    n === "won" ? "Выиграно" : "Проиграно",
+                    String(n).toLowerCase().includes("выиг") || n === "won"
+                      ? "Выиграно"
+                      : "Проиграно",
                   ]}
                   labelStyle={{ color: "#000" }}
                 />
@@ -394,7 +396,9 @@ export function ManagersSection({ manager, dateFrom, dateTo }: Props) {
                 <Tooltip
                   formatter={(v, n) => [
                     formatRub(typeof v === "number" ? v : 0),
-                    n === "won" ? "Выиграно" : "Проиграно",
+                    String(n).toLowerCase().includes("выиг") || n === "won"
+                      ? "Выиграно"
+                      : "Проиграно",
                   ]}
                   labelStyle={{ color: "#000" }}
                 />

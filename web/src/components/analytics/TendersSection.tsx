@@ -156,18 +156,20 @@ export function TendersSection({ dateFrom, dateTo, agencies }: Props) {
     0,
   );
   const avgBudget = filteredRows.length ? totalBudget / filteredRows.length : 0;
-  // Win rate = (выигранные + размещается) / (выигранные + проигранные + размещается)
+  // Win rate = (Выигран тендер + Размещается + Выиграли) / Все тендеры
   const countByStatus = (statusSubstring: string) =>
     filteredRows.filter((r) =>
       getStr(r, "tender_status").toLowerCase().includes(statusSubstring.toLowerCase())
     ).length;
   const wonCount = countByStatus("Выигран тендер");
-  const lostCount = countByStatus("Проигран тендер");
   const inProgressCount = countByStatus("Размещается");
-  const winRateDenominator = wonCount + lostCount + inProgressCount;
+  const wonAlternativeCount = countByStatus("Выиграли");
+  const winRateDenominator = filteredRows.length;
   const winRate =
     winRateDenominator > 0
-      ? Math.round(((wonCount + inProgressCount) / winRateDenominator) * 100)
+      ? Math.round(
+          ((wonCount + inProgressCount + wonAlternativeCount) / winRateDenominator) * 100
+        )
       : 0;
 
   const byStatus: Record<string, { sum: number; count: number }> = {};
