@@ -10,7 +10,7 @@ import { resolveAccessFromUser } from "@/lib/access";
 const navItems = [
   { href: "/diagram", label: "Диаграмма" },
   { href: "/branches", label: "Ветки" },
-  { href: "/", label: "Таблицы" },
+  { href: "/", label: "ИИ-ассистент" },
   { href: "/analytics", label: "Аналитика" },
 ] as const;
 

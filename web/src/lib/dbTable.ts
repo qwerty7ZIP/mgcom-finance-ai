@@ -2,7 +2,7 @@ import type { TableResult } from "@/lib/buildTableFromRecords";
 import { buildTableFromRecords } from "@/lib/buildTableFromRecords";
 import { supabaseServer } from "@/lib/supabaseServer";
 
-const ALLOWED_TABLES = ["clients", "contacts", "tenders"] as const;
+const ALLOWED_TABLES = ["clients", "contacts", "tenders", "active_list"] as const;
 type AllowedTable = (typeof ALLOWED_TABLES)[number];
 
 export type TableResultWithError = TableResult & { error?: string };
@@ -27,7 +27,9 @@ export type TableRequestLike = {
   offset?: number;
 };
 
-const DEFAULT_LIMIT = 15000;
+// Для AI-сценариев по умолчанию пытаемся читать полный набор строк.
+// На практике чтение завершится, когда Supabase вернет пустую страницу.
+const DEFAULT_LIMIT = Number.MAX_SAFE_INTEGER;
 const SUPABASE_PAGE_SIZE = 5000;
 
 // Тип Supabase-квери сильно отличается между версиями клиента,

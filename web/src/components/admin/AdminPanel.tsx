@@ -232,7 +232,7 @@ export function AdminPanel() {
                   : k === "branches"
                     ? "Ветки"
                     : k === "tables"
-                      ? "Таблицы"
+                      ? "ИИ-ассистент"
                       : "Аналитика"}
               </label>
             ))}
@@ -307,7 +307,7 @@ export function AdminPanel() {
                     : k === "branches"
                       ? "Ветки"
                       : k === "tables"
-                        ? "Таблицы"
+                        ? "ИИ-ассистент"
                         : "Аналитика"}
                 </label>
               ))}
