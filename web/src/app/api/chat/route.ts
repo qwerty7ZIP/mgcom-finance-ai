@@ -302,9 +302,11 @@ function normalizePlanRequest(request: QueryPlanRequest) {
     ? (() => {
         const normalizedSortField = normalizeField(table, request.sort?.field);
         if (!allowedFields.has(normalizedSortField)) return undefined;
+        const direction: "asc" | "desc" =
+          request.sort?.direction === "asc" ? "asc" : "desc";
         return {
           field: normalizedSortField,
-          direction: request.sort?.direction === "asc" ? "asc" : "desc",
+          direction,
         };
       })()
     : undefined;
