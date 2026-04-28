@@ -216,7 +216,11 @@ export function ChatPanel() {
         const local = await loadLocalChats();
         const chatId = activeChatId ?? crypto.randomUUID();
         const existing = local.find((c) => c.id === chatId);
-        const nextMessages = [...(existing?.messages ?? []), { role: "user", text: userMsg }, { role: "ai", text: aiReply }];
+        const nextMessages: ChatMessage[] = [
+          ...(existing?.messages ?? []),
+          { role: "user", text: userMsg },
+          { role: "ai", text: aiReply },
+        ];
         const nextChat: LocalChat = {
           id: chatId,
           title: existing?.title ?? (userMsg.length > 80 ? `${userMsg.slice(0, 80)}…` : userMsg),
