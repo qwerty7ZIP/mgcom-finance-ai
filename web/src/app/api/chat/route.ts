@@ -41,6 +41,28 @@ const KNOWN_AGENCIES = [
   "Data Stories",
 ] as const;
 
+/** Менеджеры тендерного блока (как в CRM / аналитике). */
+const KNOWN_MANAGERS = [
+  "Балаева Екатерина",
+  "Валерий Иванилов",
+  "Протонина Татьяна",
+  "Юрий Папенов",
+  "Ретюнских Анна",
+  "Кривченко Олег",
+  "Анастасия Пономарева",
+  "Тесслер Александр",
+  "Рыбальченко Евгений",
+  "Василевская Инна",
+  "Журавель Дарья",
+  "Жулев Станислав",
+] as const;
+
+const WON_TENDER_STATUSES = [
+  "Выигран тендер",
+  "Размещается",
+  "Выиграли",
+] as const;
+
 const KNOWN_PROJECTS = [
   "project",
   "performance",
@@ -162,6 +184,10 @@ const FIELD_ALIASES: Record<SupportedTable, Record<string, string>> = {
     customer: "client",
     name: "client",
     status: "tender_status",
+    manager: "manager",
+    менеджер: "manager",
+    manager_name: "manager",
+    tender_manager: "manager",
     source: "tender_ist",
     start: "tender_start",
     start_date: "tender_start",
@@ -277,12 +303,17 @@ function normalizePlanRequest(request: QueryPlanRequest) {
           const rawField = String(f.field ?? "").trim().toLowerCase();
           const isAgencyFieldHint =
             rawField.includes("агент") || rawField.includes("agency");
-          const field = isAgencyFieldHint ? "agency" : normalizeField(table, f.field);
+          const isManagerFieldHint =
+            rawField.includes("менедж") || rawField.includes("manager");
+          const field = isAgencyFieldHint
+            ? "agency"
+            : isManagerFieldHint
+              ? "manager"
+              : normalizeField(table, f.field);
           if (!allowedFields.has(field)) return null;
           let operator = normalizeOperator(f.operator);
           let value: unknown = f.value;
-          if (field === "agency") {
-            // Для агентств используем contains, чтобы совпадало по частичному названию.
+          if (field === "agency" || field === "manager") {
             operator = "contains";
           }
           if (operator === "in" && !Array.isArray(value)) {
@@ -400,6 +431,165 @@ function parseBudgetValueFromRow(row: Record<string, unknown>): number {
   return Number.NaN;
 }
 
+function getManagerNameParts(canonicalManager: string): string[] {
+  return normalizeSearchText(canonicalManager)
+    .split(" ")
+    .filter((p) => p.length >= 2);
+}
+
+function managersWithExactNamePart(part: string): string[] {
+  return KNOWN_MANAGERS.filter((m) => getManagerNameParts(m).includes(part));
+}
+
+/** Имя в запросе: полное слово, префикс (Евг., Тать.) или инициал (Е., Т.). */
+function isGivenNameMentionInQuery(q: string, given: string): boolean {
+  const g = given.toLowerCase();
+  if (g.length < 2) return false;
+  if (q.includes(g)) return true;
+
+  for (let len = 3; len < g.length; len++) {
+    if (q.includes(g.slice(0, len))) return true;
+  }
+
+  const initial = g[0];
+  if (new RegExp(`(^|\\s)${initial}(\\.|\\s|,|$)`).test(q)) return true;
+  if (new RegExp(`(^|\\s)${initial}[а-яё]{1,3}(\\s|,|$)`).test(q)) return true;
+
+  return false;
+}
+
+function isGivenNamePresentInText(text: string, given: string): boolean {
+  const t = normalizeSearchText(text);
+  return isGivenNameMentionInQuery(t, given);
+}
+
+function scoreManagerMentionInQuery(q: string, canonicalManager: string): number {
+  const parts = getManagerNameParts(canonicalManager);
+  if (parts.length === 0) return 0;
+
+  const significant = parts.filter((p) => p.length >= 3);
+  if (
+    significant.length > 0 &&
+    significant.every((p) => q.includes(p))
+  ) {
+    return 1000 + significant.length;
+  }
+
+  const primaryToken = parts.reduce((longest, part) =>
+    part.length > longest.length ? part : longest,
+  );
+  const otherParts = parts.filter((p) => p !== primaryToken);
+
+  if (primaryToken.length >= 4 && q.includes(primaryToken)) {
+    let score = 700 + primaryToken.length;
+    if (otherParts.some((p) => q.includes(p))) return score + 250;
+    if (otherParts.some((p) => isGivenNameMentionInQuery(q, p))) return score + 200;
+    if (managersWithExactNamePart(primaryToken).length === 1) return score;
+    return 0;
+  }
+
+  for (const part of parts) {
+    if (part.length < 5 || !q.includes(part)) continue;
+    if (managersWithExactNamePart(part).length === 1) {
+      return 650 + part.length;
+    }
+  }
+
+  const givenHits = parts.filter((p) => isGivenNameMentionInQuery(q, p));
+  if (givenHits.length === 1) {
+    const owners = KNOWN_MANAGERS.filter((m) =>
+      getManagerNameParts(m).some((w) => w === givenHits[0]),
+    );
+    if (owners.length === 1 && owners[0] === canonicalManager) {
+      return 500 + givenHits[0].length;
+    }
+  }
+
+  if (givenHits.length >= 2 && givenHits.every((p) => parts.includes(p))) {
+    return 900;
+  }
+
+  return 0;
+}
+
+function detectManagerFromText(text: string): string | null {
+  const q = normalizeSearchText(text);
+  let bestMatch: string | null = null;
+  let bestScore = 0;
+
+  for (const manager of KNOWN_MANAGERS) {
+    const score = scoreManagerMentionInQuery(q, manager);
+    if (score > bestScore) {
+      bestMatch = manager;
+      bestScore = score;
+    }
+  }
+  return bestMatch;
+}
+
+/** Значение для contains: самая длинная часть ФИО (обычно фамилия). */
+function managerFilterContainsValue(canonicalManager: string): string {
+  const parts = getManagerNameParts(canonicalManager).filter((p) => p.length >= 3);
+  if (parts.length === 0) return canonicalManager;
+  return parts.reduce((longest, part) =>
+    part.length > longest.length ? part : longest,
+  );
+}
+
+function rowMatchesManager(
+  row: Record<string, unknown>,
+  canonicalManager: string,
+): boolean {
+  const stored = normalizeSearchText(String(row["manager"] ?? ""));
+  if (!stored) return false;
+
+  const parts = getManagerNameParts(canonicalManager);
+  const significant = parts.filter((p) => p.length >= 3);
+  if (
+    significant.length > 0 &&
+    significant.every((p) => stored.includes(p))
+  ) {
+    return true;
+  }
+
+  const anchor = managerFilterContainsValue(canonicalManager);
+  if (!stored.includes(anchor)) return false;
+
+  const others = parts.filter((p) => p !== anchor && p.length >= 2);
+  if (others.length === 0) return true;
+
+  return others.some(
+    (p) => stored.includes(p) || isGivenNamePresentInText(stored, p),
+  );
+}
+
+function extractYearFromText(text: string): number | null {
+  const m = text.match(/\b(20\d{2})\b/);
+  if (!m) return null;
+  const year = Number(m[1]);
+  return Number.isFinite(year) ? year : null;
+}
+
+function isManagerWonTendersIntent(text: string): boolean {
+  const manager = detectManagerFromText(text);
+  if (!manager) return false;
+  const q = text.toLowerCase();
+  const asksWon =
+    /выигр/.test(q) ||
+    /сыграл/.test(q) ||
+    /побед/.test(q) ||
+    /выигрыш/.test(q);
+  const asksTenders = /тендер/.test(q);
+  const asksManagerContext =
+    /менеджер/.test(q) ||
+    /сколько/.test(q) ||
+    /список/.test(q) ||
+    /покаж/.test(q) ||
+    /какие/.test(q) ||
+    /перечисл/.test(q);
+  return asksWon && asksTenders && asksManagerContext;
+}
+
 function detectAgencyFromText(text: string): string | null {
   const q = text.toLowerCase();
   for (const agency of KNOWN_AGENCIES) {
@@ -435,12 +625,16 @@ function detectProjectFromText(text: string): string | null {
   }
   if (bestMatch) return bestMatch;
 
+  if (detectManagerFromText(text)) return null;
+
   // Эвристика: фраза после "по ...", если это не похоже на период/статус.
   const byMatch = q.match(/\bпо\s+([a-zа-я0-9+/\- ]{3,60})/i);
   if (byMatch) {
     const candidate = byMatch[1].trim();
     if (
-      !/(период|год|месяц|квартал|клиент|агентств|бюджет|статус)/.test(candidate)
+      !/(период|год|месяц|квартал|клиент|агентств|бюджет|статус|менеджер)/.test(
+        candidate,
+      )
     ) {
       return candidate;
     }
@@ -502,8 +696,11 @@ const PLANNER_PROMPT = `
 - Для поиска клиента используй contains/ilike по полям:
   tenders.client, clients.mgc_client, clients.pf_client, active_list.client, active_list.alt_client, contacts.company.
 - Если в запросе встречаются агентства из списка [AGM, MGCom, MGrowth, Артикс, E-Promo, i-Media, Data Stories], обязательно добавляй фильтр agency contains "<название агентства>".
+- Если в запросе фигурирует менеджер тендерного блока (полное ФИО, только фамилия, сокращённое имя или инициал — напр. «Рыбальченко», «Евг. Рыбальченко»), фильтруй по полю manager contains, не путай с agency/client.
+- Менеджеры: ${KNOWN_MANAGERS.join(", ")}.
 - Если в запросе встречается проект/направление, добавляй фильтр project contains "<значение проекта>".
 - Для "выигранных/сыгранных" тендеров используй tender_status in ["Выигран тендер","Размещается","Выиграли"].
+- Для вопросов «сколько/какие тендеры выиграл <менеджер> за <год>» — table=tenders, manager contains, tender_status in (выигранные), год только по tender_start.
 - Для "проигранных" используй tender_status in ["Проигран тендер"].
 - Для вопросов про процент/долю выигранных тендеров рассчитывай метрику по количеству, а не по бюджету.
 - Для "прошедших" без уточнения — ориентируйся на завершенные/состоявшиеся статусы и/или даты завершения.
@@ -672,6 +869,36 @@ export async function POST(req: Request) {
     const averageBudgetIntent = isAverageBudgetQuestion(latestMessage);
     const wonBudgetShareIntent = isWonBudgetShareQuestion(latestMessage);
     const wonTendersPercentIntent = isWonTendersPercentQuestion(latestMessage);
+    const managerFromMessage = detectManagerFromText(latestMessage);
+    const managerWonTendersIntent = isManagerWonTendersIntent(latestMessage);
+    const yearFromMessage = extractYearFromText(latestMessage);
+
+    if (managerWonTendersIntent && managerFromMessage) {
+      const managerContains = managerFilterContainsValue(managerFromMessage);
+      const filters: { field: string; operator: string; value: unknown }[] = [
+        { field: "manager", operator: "contains", value: managerContains },
+        {
+          field: "tender_status",
+          operator: "in",
+          value: [...WON_TENDER_STATUSES],
+        },
+      ];
+      if (yearFromMessage) {
+        filters.push(
+          { field: "tender_start", operator: "gte", value: `${yearFromMessage}-01-01` },
+          { field: "tender_start", operator: "lte", value: `${yearFromMessage}-12-31` },
+        );
+      }
+      normalizedRequests.length = 0;
+      normalizedRequests.push({
+        table: "tenders",
+        description: "Выигранные тендеры менеджера",
+        filters,
+        sort: { field: "tender_start", direction: "desc" },
+        limit: undefined,
+        columns: undefined,
+      });
+    }
 
     if (maxBudgetIntent || topBudgetLimit || averageBudgetIntent || wonBudgetShareIntent) {
       // Для бюджетных метрик считаем по полной доступной выборке.
@@ -751,6 +978,21 @@ export async function POST(req: Request) {
         req.filters = [
           ...filters.filter((f) => String(f.field).toLowerCase() !== "project"),
           { field: "project", operator: "contains", value: projectFromMessage },
+        ];
+      }
+    }
+
+    if (managerFromMessage && !managerWonTendersIntent) {
+      for (const req of normalizedRequests) {
+        if (req.table !== "tenders") continue;
+        const filters = Array.isArray(req.filters) ? req.filters : [];
+        req.filters = [
+          ...filters.filter((f) => String(f.field).toLowerCase() !== "manager"),
+          {
+            field: "manager",
+            operator: "contains",
+            value: managerFilterContainsValue(managerFromMessage),
+          },
         ];
       }
     }
@@ -1002,7 +1244,7 @@ export async function POST(req: Request) {
       }
 
       const rows = tenderDataset.rows;
-      const WON_STATUSES = new Set(["Выигран тендер", "Размещается", "Выиграли"]);
+      const WON_STATUSES = new Set<string>(WON_TENDER_STATUSES);
       const LOST_STATUSES = new Set(["Проигран тендер"]);
 
       const wonCount = rows.filter((r) =>
@@ -1028,6 +1270,68 @@ export async function POST(req: Request) {
         `| Win rate по решенным (won/lost) | ${winRateDecided.toFixed(1)}% |`,
         "",
         "Базовая метрика считается по количеству: `выигранные / все`. Дополнительно показан показатель по решенным тендерам.",
+      ].join("\n");
+
+      return NextResponse.json({ reply: `${reply}${diagnostics}` });
+    }
+
+    if (managerWonTendersIntent && managerFromMessage) {
+      const tenderDataset = executed.find((x) => x.request.table === "tenders");
+      if (tenderDataset?.error) {
+        return NextResponse.json({
+          reply: `Не удалось получить данные по тендерам из БД: ${tenderDataset.error}`,
+        });
+      }
+
+      const wonStatusSet = new Set<string>(WON_TENDER_STATUSES);
+      const fmt = new Intl.NumberFormat("ru-RU");
+      const matched = (tenderDataset?.rows ?? []).filter((row) => {
+        if (!rowMatchesManager(row, managerFromMessage)) return false;
+        const status = String(row["tender_status"] ?? "").trim();
+        return wonStatusSet.has(status);
+      });
+
+      const yearLabel = yearFromMessage ? ` в ${yearFromMessage} году` : "";
+      const periodNote = yearFromMessage
+        ? " (по дате начала тендера `tender_start`)"
+        : "";
+
+      if (matched.length === 0) {
+        return NextResponse.json({
+          reply: [
+            `У менеджера **${managerFromMessage}** не найдено выигранных тендеров${yearLabel}${periodNote}.`,
+            "",
+            "Учитывались статусы: `Выигран тендер`, `Размещается`, `Выиграли`.",
+            diagnostics,
+          ].join("\n"),
+        });
+      }
+
+      const tableRows = matched.map((row) => {
+        const budget = parseBudgetValueFromRow(row);
+        const budgetText = Number.isFinite(budget)
+          ? `${fmt.format(Math.round(budget))} ₽`
+          : "—";
+        return [
+          String(row["client"] ?? "—"),
+          String(row["agency"] ?? "—"),
+          budgetText,
+          String(row["tender_status"] ?? "—"),
+          String(row["tender_start"] ?? "—"),
+          String(row["manager"] ?? "—"),
+        ];
+      });
+
+      const reply = [
+        `Менеджер **${managerFromMessage}** выиграл **${matched.length}** тендер(ов)${yearLabel}${periodNote}.`,
+        "",
+        "| Клиент | Агентство | Бюджет | Статус | Начало | Менеджер |",
+        "|---|---|---:|---|---|---|",
+        ...tableRows.map(
+          (cells) => `| ${cells.join(" | ")} |`,
+        ),
+        "",
+        "Статусы «выигран»: `Выигран тендер`, `Размещается`, `Выиграли`. Сопоставление менеджера — по полю `manager` (все части ФИО из справочника).",
       ].join("\n");
 
       return NextResponse.json({ reply: `${reply}${diagnostics}` });

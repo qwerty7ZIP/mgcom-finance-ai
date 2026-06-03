@@ -55,8 +55,8 @@ export function ChatPanel() {
 
   const getStorageKey = async () => {
     const uid = await supabaseBrowser?.auth
-      .getUser()
-      .then((x) => x.data.user?.id ?? "anon")
+      .getSession()
+      .then((s) => s.data.session?.user?.id ?? "anon")
       .catch(() => "anon");
     return `ai_chats_local_v1_${uid ?? "anon"}`;
   };
@@ -450,9 +450,9 @@ export function ChatPanel() {
           </div>
           <div className="flex flex-wrap gap-1">
             {[
+              "Сколько тендеров выиграл Рыбальченко в 2026 году?",
               "Покажи топ-10 клиентов по сумме бюджетов тендеров за 2025 и долю выигранных",
               "Какие контакты есть у клиента Яндекс и какие у них должности?",
-              "Когда обычно у Яндекса проходят тендеры по performance за последние 3 года?",
             ].map((chip) => (
               <button
                 key={chip}

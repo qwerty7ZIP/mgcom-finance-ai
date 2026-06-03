@@ -2,10 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { supabaseBrowser } from "@/lib/supabaseBrowser";
-import { resolveAccessFromUser } from "@/lib/access";
+import { useAuth } from "@/components/AuthProvider";
 
 const navItems = [
   { href: "/diagram", label: "Диаграмма" },
@@ -16,28 +14,13 @@ const navItems = [
 
 export function AppHeader() {
   const pathname = usePathname();
-  const [canDiagram, setCanDiagram] = useState(true);
-  const [canBranches, setCanBranches] = useState(true);
-  const [canTables, setCanTables] = useState(true);
-  const [canAnalytics, setCanAnalytics] = useState(true);
-  const [isAdmin, setIsAdmin] = useState(false);
-
-  useEffect(() => {
-    let mounted = true;
-    if (!supabaseBrowser) return;
-    supabaseBrowser.auth.getUser().then(({ data: { user } }) => {
-      if (!mounted) return;
-      const access = resolveAccessFromUser(user ?? null);
-      setCanDiagram(access.sections.diagram);
-      setCanBranches(access.sections.branches);
-      setCanTables(access.sections.tables);
-      setCanAnalytics(access.sections.analytics);
-      setIsAdmin(access.isAdmin);
-    });
-    return () => {
-      mounted = false;
-    };
-  }, []);
+  const { access, ready, user } = useAuth();
+  const showNav = !ready || Boolean(user);
+  const canDiagram = showNav ? access.sections.diagram : true;
+  const canBranches = showNav ? access.sections.branches : true;
+  const canTables = showNav ? access.sections.tables : true;
+  const canAnalytics = showNav ? access.sections.analytics : true;
+  const isAdmin = showNav && access.isAdmin;
 
   const filteredNavItems = navItems.filter((n) => {
     if (n.href === "/diagram") return canDiagram;

@@ -21,8 +21,9 @@ export default function AccountPage() {
       setLoading(false);
       return;
     }
-    supabaseBrowser.auth.getUser().then(({ data: { user: u } }) => {
-      setUser(u ?? null);
+    supabaseBrowser.auth.getSession().then(({ data: { session } }) => {
+      const u = session?.user ?? null;
+      setUser(u);
       setLoading(false);
       if (!u) router.replace("/auth/sign-in");
     });

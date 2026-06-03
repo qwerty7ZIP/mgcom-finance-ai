@@ -1,43 +1,36 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import type { User } from "@supabase/supabase-js";
 import { AppHeader } from "@/components/AppHeader";
-import { supabaseBrowser } from "@/lib/supabaseBrowser";
+import { AuthProvider, useAuth } from "@/components/AuthProvider";
 import {
   canAccessPath,
   hasAnySectionAccess,
-  resolveAccessFromUser,
 } from "@/lib/access";
+import { supabaseBrowser } from "@/lib/supabaseBrowser";
 
 type Props = {
   children: React.ReactNode;
 };
 
-export function ProtectedLayout({ children }: Props) {
+function ProtectedLayoutInner({ children }: Props) {
   const router = useRouter();
   const pathname = usePathname();
-  const [checking, setChecking] = useState(true);
-  const [user, setUser] = useState<User | null>(null);
+  const { user, access, ready } = useAuth();
 
   useEffect(() => {
+    if (!ready) return;
     if (!supabaseBrowser) {
       router.replace("/auth/sign-in");
       return;
     }
+    if (!user) {
+      router.replace("/auth/sign-in");
+    }
+  }, [ready, user, router]);
 
-    supabaseBrowser.auth.getUser().then(({ data: { user } }) => {
-      if (!user) {
-        router.replace("/auth/sign-in");
-      } else {
-        setUser(user);
-        setChecking(false);
-      }
-    });
-  }, [router]);
-
-  if (checking) {
+  if (!ready) {
     return (
       <div className="flex h-screen flex-col bg-background text-foreground overflow-hidden">
         <AppHeader />
@@ -54,7 +47,18 @@ export function ProtectedLayout({ children }: Props) {
     );
   }
 
-  const access = resolveAccessFromUser(user);
+  if (!user) {
+    return (
+      <div className="flex h-screen flex-col bg-background text-foreground overflow-hidden">
+        <AppHeader />
+        <main className="flex flex-1 items-center justify-center">
+          <span className="text-xs text-slate-500 dark:text-slate-400">
+            Перенаправляем на вход…
+          </span>
+        </main>
+      </div>
+    );
+  }
 
   if (!hasAnySectionAccess(access)) {
     return (
@@ -87,5 +91,13 @@ export function ProtectedLayout({ children }: Props) {
       <AppHeader />
       <main className="flex flex-1 overflow-hidden">{children}</main>
     </div>
+  );
+}
+
+export function ProtectedLayout({ children }: Props) {
+  return (
+    <AuthProvider>
+      <ProtectedLayoutInner>{children}</ProtectedLayoutInner>
+    </AuthProvider>
   );
 }
