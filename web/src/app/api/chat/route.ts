@@ -397,10 +397,25 @@ function isWonBudgetShareQuestion(text: string): boolean {
 
 function isWonTendersPercentQuestion(text: string): boolean {
   const q = text.toLowerCase();
-  const asksPercent = /процент|дол\w+|конверси\w+|win\s*rate/.test(q);
+  const asksPercent = /процент|дол\w+|конверси\w+|win\s*rate|винрейт/.test(q);
   const asksWon = /выигран|выигрыш|сыгран/.test(q);
   const asksTenders = /тендер/.test(q);
   return asksPercent && asksWon && asksTenders;
+}
+
+function isManagerWinRateQuestion(text: string): boolean {
+  if (!detectManagerFromText(text)) return false;
+  const q = text.toLowerCase();
+  return /винрейт|win\s*rate|конверси\w+|процент\w*\s+выигр|дол\w+\s+выигр/.test(q);
+}
+
+function isManagerTendersCountQuestion(text: string): boolean {
+  if (!detectManagerFromText(text)) return false;
+  const q = text.toLowerCase();
+  const asksTenders = /тендер/.test(q);
+  const asksCount = /сколько|количеств|всего|было/.test(q);
+  const asksWon = /выигр|побед|проигр|винрейт|win\s*rate|конверси/.test(q);
+  return asksTenders && asksCount && !asksWon;
 }
 
 function isTenderPeriodQuestion(text: string): boolean {
@@ -588,6 +603,26 @@ function isManagerWonTendersIntent(text: string): boolean {
     /какие/.test(q) ||
     /перечисл/.test(q);
   return asksWon && asksTenders && asksManagerContext;
+}
+
+function buildManagerTenderFilters(
+  canonicalManager: string,
+  year: number | null,
+): { field: string; operator: string; value: unknown }[] {
+  const filters: { field: string; operator: string; value: unknown }[] = [
+    {
+      field: "manager",
+      operator: "contains",
+      value: managerFilterContainsValue(canonicalManager),
+    },
+  ];
+  if (year) {
+    filters.push(
+      { field: "tender_start", operator: "gte", value: `${year}-01-01` },
+      { field: "tender_start", operator: "lte", value: `${year}-12-31` },
+    );
+  }
+  return filters;
 }
 
 function detectAgencyFromText(text: string): string | null {
@@ -838,6 +873,90 @@ export async function POST(req: Request) {
   }));
 
   try {
+    const managerFromMessage = detectManagerFromText(latestMessage);
+    const managerWinRateIntent = isManagerWinRateQuestion(latestMessage);
+    const managerTendersCountIntent = isManagerTendersCountQuestion(latestMessage);
+    const yearFromMessage = extractYearFromText(latestMessage);
+
+    if (
+      managerFromMessage &&
+      (managerWinRateIntent || managerTendersCountIntent)
+    ) {
+      const request = {
+        table: "tenders",
+        description: "Тендеры менеджера для прямого расчета",
+        filters: buildManagerTenderFilters(managerFromMessage, yearFromMessage),
+        sort: { field: "tender_start", direction: "desc" as const },
+        limit: undefined,
+        columns: undefined,
+      };
+      const result = await getDbRowsByRequest(request);
+      const diagnostics = buildDiagnosticsMarkdown([
+        {
+          request,
+          rowCount: result.rows.length,
+          error: result.error,
+        },
+      ]);
+
+      if (result.error) {
+        return NextResponse.json({
+          reply: `Не удалось получить данные по тендерам из БД: ${result.error}`,
+        });
+      }
+
+      const rows = result.rows.filter((row) =>
+        rowMatchesManager(row, managerFromMessage),
+      );
+      const wonStatusSet = new Set<string>(WON_TENDER_STATUSES);
+      const lostStatusSet = new Set<string>(["Проигран тендер"]);
+      const wonCount = rows.filter((row) =>
+        wonStatusSet.has(String(row["tender_status"] ?? "").trim()),
+      ).length;
+      const lostCount = rows.filter((row) =>
+        lostStatusSet.has(String(row["tender_status"] ?? "").trim()),
+      ).length;
+      const totalCount = rows.length;
+      const winRateAll = totalCount > 0 ? (wonCount / totalCount) * 100 : 0;
+      const decidedCount = wonCount + lostCount;
+      const winRateDecided =
+        decidedCount > 0 ? (wonCount / decidedCount) * 100 : 0;
+      const yearLabel = yearFromMessage ? ` в ${yearFromMessage} году` : "";
+      const periodNote = yearFromMessage
+        ? " (по дате начала тендера `tender_start`)"
+        : "";
+
+      if (managerWinRateIntent) {
+        const reply = [
+          `Винрейт **${managerFromMessage}**${yearLabel}: **${winRateAll.toFixed(1)}%**${periodNote}.`,
+          "",
+          "| Метрика | Значение |",
+          "|---|---:|",
+          `| Всего тендеров менеджера | ${totalCount} |`,
+          `| Выигранные | ${wonCount} |`,
+          `| Проигранные | ${lostCount} |`,
+          `| Win rate по всем | ${winRateAll.toFixed(1)}% |`,
+          `| Win rate по решенным (won/lost) | ${winRateDecided.toFixed(1)}% |`,
+          "",
+          "Основная метрика считается как `выигранные / все тендеры менеджера`. Выигранные статусы: `Выигран тендер`, `Размещается`, `Выиграли`.",
+        ].join("\n");
+
+        return NextResponse.json({ reply: `${reply}${diagnostics}` });
+      }
+
+      const reply = [
+        `У **${managerFromMessage}** найдено **${totalCount}** тендер(ов)${yearLabel}${periodNote}.`,
+        "",
+        "| Статус | Количество |",
+        "|---|---:|",
+        `| Выигранные | ${wonCount} |`,
+        `| Проигранные | ${lostCount} |`,
+        `| Остальные статусы | ${Math.max(totalCount - wonCount - lostCount, 0)} |`,
+      ].join("\n");
+
+      return NextResponse.json({ reply: `${reply}${diagnostics}` });
+    }
+
     const planRaw = await callYandex(
       [
         { role: "system", text: PLANNER_PROMPT },
@@ -869,9 +988,7 @@ export async function POST(req: Request) {
     const averageBudgetIntent = isAverageBudgetQuestion(latestMessage);
     const wonBudgetShareIntent = isWonBudgetShareQuestion(latestMessage);
     const wonTendersPercentIntent = isWonTendersPercentQuestion(latestMessage);
-    const managerFromMessage = detectManagerFromText(latestMessage);
     const managerWonTendersIntent = isManagerWonTendersIntent(latestMessage);
-    const yearFromMessage = extractYearFromText(latestMessage);
 
     if (managerWonTendersIntent && managerFromMessage) {
       const managerContains = managerFilterContainsValue(managerFromMessage);
